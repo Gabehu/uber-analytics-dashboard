@@ -30,12 +30,37 @@ create_table()
 # Helper functions
 # -----------------------------
 
-def get_current_week_range():
-    """Return the Monday-Sunday date range for the current week."""
-    today = date.today()
-    start_of_week = today - timedelta(days=today.weekday())
-    end_of_week = start_of_week + timedelta(days=6)
-    return start_of_week, end_of_week
+def get_week_start(input_date):
+    """Return the Monday date for the week containing input_date."""
+    return input_date - timedelta(days=input_date.weekday())
+
+
+def get_week_end(week_start):
+    """Return the Sunday date for a given Monday week_start."""
+    return week_start + timedelta(days=6)
+
+
+def format_week_range(week_start):
+    """Format a week range for dropdown labels and captions."""
+    week_end = get_week_end(week_start)
+    return f"{week_start.strftime('%b %d')} - {week_end.strftime('%b %d, %Y')}"
+
+
+def get_available_week_starts(dataframe):
+    """
+    Return all week starts found in the data, plus the current week.
+
+    This keeps the current week visible even if no entries exist yet.
+    """
+    current_week_start = get_week_start(date.today())
+
+    if dataframe.empty:
+        return [current_week_start]
+
+    week_starts = set(dataframe["date_obj"].apply(get_week_start))
+    week_starts.add(current_week_start)
+
+    return sorted(week_starts, reverse=True)
 
 
 def format_hours(decimal_hours):
@@ -97,13 +122,21 @@ else:
 
 st.subheader("Overview")
 
-week_start, week_end = get_current_week_range()
-
 if not df.empty:
     df["date_obj"] = pd.to_datetime(df["date"]).dt.date
 
-    # TODO: Add a week selector so older weeks can be reviewed.
-    # V1 only shows the current Monday-Sunday week.
+week_options = get_available_week_starts(df)
+
+selected_week_start = st.selectbox(
+    "Select week",
+    options=week_options,
+    format_func=format_week_range,
+)
+
+week_start = selected_week_start
+week_end = get_week_end(week_start)
+
+if not df.empty:
     week_df = df[
         (df["date_obj"] >= week_start)
         & (df["date_obj"] <= week_end)
@@ -142,15 +175,15 @@ else:
 
 col1, col2, col3, col4 = st.columns(4)
 
-col1.metric("This Week Earnings", f"${total_week_earnings:.2f}")
+col1.metric("Selected Week Earnings", f"${total_week_earnings:.2f}")
 
 if week_hourly is None:
-    col2.metric("This Week $/hr", "N/A")
+    col2.metric("Selected Week $/hr", "N/A")
 else:
-    col2.metric("This Week $/hr", f"${week_hourly:.2f}/hr")
+    col2.metric("Selected Week $/hr", f"${week_hourly:.2f}/hr")
 
-col3.metric("Trips This Week", int(total_week_trips))
-col4.metric("Best Day This Week", f"${best_day_total:.2f}")
+col3.metric("Trips Selected Week", int(total_week_trips))
+col4.metric("Best Day This Selected Week", f"${best_day_total:.2f}")
 
 st.divider()
 
@@ -558,9 +591,9 @@ with right_col:
 # -----------------------------
 
 st.divider()
-st.subheader("This Week Summary")
+st.subheader("Selected Week Summary")
 
-st.caption(f"{week_start.strftime('%b %d')} - {week_end.strftime('%b %d, %Y')}")
+st.caption(format_week_range(week_start))
 
 if week_df.empty:
     st.info("No entries for this week yet.")
@@ -645,32 +678,41 @@ st.subheader("Charts")
 if df.empty:
     st.info("No chart data yet. Add entries to see earnings trends.")
 else:
-    chart_df = df.copy()
-
+    chart_df = week_df.copy()
     chart_df["date_obj"] = pd.to_datetime(chart_df["date"])
     chart_df = chart_df.sort_values("date_obj")
 
     daily_earnings = chart_df.groupby("date_obj", as_index=False)["total"].sum()
-    daily_earnings["date_label"] = daily_earnings["date_obj"].dt.strftime("%b %d")
+    daily_earnings["Date"] = daily_earnings["date_obj"].dt.strftime("%b %d")
+    daily_earnings = daily_earnings.rename(
+        columns={
+            "total": "Earnings ($)",
+        }
+    )
 
     st.markdown("### Daily Earnings Over Time")
 
     st.bar_chart(
         daily_earnings,
-        x="date_label",
-        y="total",
+        x="Date",
+        y="Earnings ($)",
         use_container_width=True,
     )
 
     st.markdown("### Hourly Rate Over Time")
 
     hourly_chart = chart_df[["date_obj", "hourly_rate"]].copy()
-    hourly_chart["date_label"] = hourly_chart["date_obj"].dt.strftime("%b %d")
+    hourly_chart["Date"] = hourly_chart["date_obj"].dt.strftime("%b %d")
+    hourly_chart = hourly_chart.rename(
+        columns={
+            "hourly_rate": "Hourly Rate ($/hr)",
+        }
+    )
     hourly_chart = hourly_chart.sort_values("date_obj")
 
     st.line_chart(
         hourly_chart,
-        x="date_label",
-        y="hourly_rate",
+        x="Date",
+        y="Hourly Rate ($/hr)",
         use_container_width=True,
     )
