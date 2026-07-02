@@ -47,15 +47,20 @@ streamlit run app.py
 
 ## Current status
 
-Version 1 is feature-complete as a local prototype.
+Version 1.1 is feature-complete as a local Streamlit prototype.
 
-V1 includes local data entry, SQLite storage, editing/deleting entries, daily recaps, current-week summaries, and basic charts.
+V1.1 includes local data entry, SQLite storage, editing/deleting entries, daily recaps, selected-week summaries, week filtering, and basic earnings/hourly rate charts.
+
+The next major step is V2: rebuilding the prototype as a more polished web app with clearer pages, routing, and UI.
 
 ## Planned improvements
 
-- Add a week selector for viewing older weeks
-- Improve chart labels and formatting
-- Add a bills/wallet tracker
-- Add weekly goal progress
-- Improve the edit/delete workflow
+### V2 direction
+
+- Rebuild as a full web app with separate frontend/backend structure
+- Add proper pages for dashboard, entries, entry details, editing, and analytics
+- Improve the entry/edit workflow
+- Improve chart design and table interactions
+- Add bills/wallet tracking
+- Add weekly/monthly goal progress
 - Add sample/demo data for public portfolio use
