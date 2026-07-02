@@ -8,12 +8,20 @@ venv/
 
 # Local database and personal data
 data/
+**/data/
 *.db
 *.sqlite
 *.sqlite3
 
 # Streamlit secrets
 .streamlit/secrets.toml
+**/.streamlit/secrets.toml
+
+# Node / frontend
+node_modules/
+dist/
+.env
+.env.local
 
 # OS/editor files
 .DS_Store
