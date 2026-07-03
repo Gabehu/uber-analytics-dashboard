@@ -9,6 +9,13 @@ class Summary(BaseModel):
     avg_per_trip: float
 
 
+class DailyRecordCreate(BaseModel):
+    date: str
+    earnings: float
+    online_hours: float
+    trips: int
+
+
 class DailyRecord(BaseModel):
     date: str
     earnings: float

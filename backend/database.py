@@ -95,3 +95,56 @@ def get_summary_data():
         "avg_hourly": round(avg_hourly, 2),
         "avg_per_trip": round(avg_per_trip, 2),
     }
+
+
+def create_daily_record(record):
+    avg_hourly = record.earnings / record.online_hours if record.online_hours > 0 else 0
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO daily_earnings
+        (date, earnings, online_hours, trips, avg_hourly)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            record.date,
+            record.earnings,
+            record.online_hours,
+            record.trips,
+            round(avg_hourly, 2),
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "date": record.date,
+        "earnings": record.earnings,
+        "online_hours": record.online_hours,
+        "trips": record.trips,
+        "avg_hourly": round(avg_hourly, 2),
+    }
+
+
+def delete_daily_record(date: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM daily_earnings
+        WHERE date = ?
+        """,
+        (date,)
+    )
+
+    deleted_count = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return deleted_count

@@ -1,6 +1,14 @@
-from fastapi import FastAPI
-from database import initialize_database, get_summary_data, get_daily_data
-from schemas import Summary, DailyRecord
+import sqlite3
+
+from fastapi import FastAPI, HTTPException
+from database import (
+    initialize_database,
+    get_summary_data,
+    get_daily_data,
+    create_daily_record,
+    delete_daily_record,
+)
+from schemas import Summary, DailyRecord, DailyRecordCreate
 
 app = FastAPI(
     title="Uber Dashboard API",
@@ -27,3 +35,30 @@ def summary():
 @app.get("/api/daily", response_model=list[DailyRecord])
 def daily():
     return get_daily_data()
+
+
+@app.post("/api/daily", response_model=DailyRecord, status_code=201)
+def create_daily(record: DailyRecordCreate):
+    try:
+        return create_daily_record(record)
+    except sqlite3.IntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="A daily record with this date already exists."
+        )
+
+
+@app.delete("/api/daily/{date}")
+def delete_daily(date: str):
+    deleted_count = delete_daily_record(date)
+
+    if deleted_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="No daily record found for this date."
+        )
+
+    return {
+        "message": "Daily record deleted successfully.",
+        "date": date
+    }
