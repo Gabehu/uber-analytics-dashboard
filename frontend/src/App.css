@@ -94,3 +94,59 @@ th {
   padding: 12px;
   border-radius: 10px;
 }
+
+.form-section {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 40px;
+}
+
+.form-section h2 {
+  margin-top: 0;
+}
+
+.entry-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
+.entry-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #d1d5db;
+  font-size: 14px;
+}
+
+.entry-form input {
+  border: 1px solid #374151;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #111827;
+  color: #f9fafb;
+}
+
+.entry-form button {
+  border: none;
+  border-radius: 10px;
+  padding: 11px 16px;
+  background: #2563eb;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.entry-form button:hover {
+  background: #1d4ed8;
+}
+
+.success {
+  background: #064e3b;
+  border: 1px solid #10b981;
+  padding: 12px;
+  border-radius: 10px;
+}
