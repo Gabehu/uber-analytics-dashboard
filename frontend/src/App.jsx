@@ -5,9 +5,14 @@ const API_BASE_URL = "http://127.0.0.1:8000";
 
 const emptyForm = {
   date: "",
-  earnings: "",
   online_hours: "",
   trips: "",
+  net_fare: "",
+  tips: "",
+  promotions: "",
+  miles_driven: "",
+  wallet_balance: "",
+  notes: "",
 };
 
 function App() {
@@ -43,17 +48,17 @@ function App() {
   }, []);
 
   useEffect(() => {
-  if (!error && !successMessage) {
-    return;
-  }
+    if (!error && !successMessage) {
+      return;
+    }
 
-  const timerId = setTimeout(() => {
-    setError("");
-    setSuccessMessage("");
-  }, 3000);
+    const timerId = setTimeout(() => {
+      setError("");
+      setSuccessMessage("");
+    }, 3000);
 
-  return () => clearTimeout(timerId);
-}, [error, successMessage]);
+    return () => clearTimeout(timerId);
+  }, [error, successMessage]);
 
   function handleInputChange(event) {
     const { name, value } = event.target;
@@ -64,6 +69,22 @@ function App() {
     }));
   }
 
+  function optionalNumber(value) {
+    if (value === "") {
+      return null;
+    }
+
+    return Number(value);
+  }
+
+  function optionalText(value) {
+    if (value.trim() === "") {
+      return null;
+    }
+
+    return value;
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
 
@@ -72,9 +93,14 @@ function App() {
 
     const newRecord = {
       date: formData.date,
-      earnings: Number(formData.earnings),
       online_hours: Number(formData.online_hours),
       trips: Number(formData.trips),
+      net_fare: Number(formData.net_fare),
+      tips: Number(formData.tips),
+      promotions: Number(formData.promotions),
+      miles_driven: optionalNumber(formData.miles_driven),
+      wallet_balance: optionalNumber(formData.wallet_balance),
+      notes: optionalText(formData.notes),
     };
 
     try {
@@ -130,9 +156,9 @@ function App() {
     <main className="app">
       <section className="hero">
         <p className="eyebrow">Uber Dashboard v2</p>
-        <h1>Backend-connected dashboard</h1>
+        <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
-          This React frontend is reading and creating daily records through the FastAPI backend.
+          Track earnings, breakdowns, mileage, and daily Uber efficiency.
         </p>
       </section>
 
@@ -171,7 +197,7 @@ function App() {
       )}
 
       <section className="form-section">
-        <h2>Add daily record</h2>
+        <h2>Add daily log</h2>
 
         <form onSubmit={handleSubmit} className="entry-form">
           <label>
@@ -181,19 +207,6 @@ function App() {
               name="date"
               value={formData.date}
               onChange={handleInputChange}
-              required
-            />
-          </label>
-
-          <label>
-            Earnings
-            <input
-              type="number"
-              name="earnings"
-              value={formData.earnings}
-              onChange={handleInputChange}
-              step="0.01"
-              min="0"
               required
             />
           </label>
@@ -223,21 +236,101 @@ function App() {
             />
           </label>
 
-          <button type="submit">Add record</button>
+          <label>
+            Net fare
+            <input
+              type="number"
+              name="net_fare"
+              value={formData.net_fare}
+              onChange={handleInputChange}
+              step="0.01"
+              min="0"
+              required
+            />
+          </label>
+
+          <label>
+            Tips
+            <input
+              type="number"
+              name="tips"
+              value={formData.tips}
+              onChange={handleInputChange}
+              step="0.01"
+              min="0"
+              required
+            />
+          </label>
+
+          <label>
+            Promotions
+            <input
+              type="number"
+              name="promotions"
+              value={formData.promotions}
+              onChange={handleInputChange}
+              step="0.01"
+              min="0"
+              required
+            />
+          </label>
+
+          <label>
+            Miles driven optional
+            <input
+              type="number"
+              name="miles_driven"
+              value={formData.miles_driven}
+              onChange={handleInputChange}
+              step="0.1"
+              min="0"
+            />
+          </label>
+
+          <label>
+            Wallet balance optional
+            <input
+              type="number"
+              name="wallet_balance"
+              value={formData.wallet_balance}
+              onChange={handleInputChange}
+              step="0.01"
+              min="0"
+            />
+          </label>
+
+          <label className="notes-field">
+            Notes optional
+            <textarea
+              name="notes"
+              value={formData.notes}
+              onChange={handleInputChange}
+              rows="3"
+            />
+          </label>
+
+          <button type="submit">Add log</button>
         </form>
       </section>
 
       <section className="table-section">
-        <h2>Daily records</h2>
+        <h2>Daily logs</h2>
 
         <table>
           <thead>
             <tr>
               <th>Date</th>
-              <th>Earnings</th>
+              <th>Total</th>
+              <th>Fare</th>
+              <th>Tips</th>
+              <th>Promos</th>
               <th>Hours</th>
               <th>Trips</th>
-              <th>Avg hourly</th>
+              <th>$/hr</th>
+              <th>$/trip</th>
+              <th>Miles</th>
+              <th>$/mile</th>
+              <th>Wallet</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -246,10 +339,29 @@ function App() {
             {dailyRecords.map((record) => (
               <tr key={record.date}>
                 <td>{record.date}</td>
-                <td>${record.earnings.toFixed(2)}</td>
+                <td>${record.total_earnings.toFixed(2)}</td>
+                <td>${record.net_fare.toFixed(2)}</td>
+                <td>${record.tips.toFixed(2)}</td>
+                <td>${record.promotions.toFixed(2)}</td>
                 <td>{record.online_hours.toFixed(2)}</td>
                 <td>{record.trips}</td>
                 <td>${record.avg_hourly.toFixed(2)}</td>
+                <td>${record.avg_per_trip.toFixed(2)}</td>
+                <td>
+                  {record.miles_driven !== null
+                    ? record.miles_driven.toFixed(1)
+                    : "—"}
+                </td>
+                <td>
+                  {record.earnings_per_mile !== null
+                    ? `$${record.earnings_per_mile.toFixed(2)}`
+                    : "—"}
+                </td>
+                <td>
+                  {record.wallet_balance !== null
+                    ? `$${record.wallet_balance.toFixed(2)}`
+                    : "—"}
+                </td>
                 <td>
                   <button
                     type="button"
