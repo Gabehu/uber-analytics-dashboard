@@ -150,3 +150,17 @@ th {
   padding: 12px;
   border-radius: 10px;
 }
+
+.delete-button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #991b1b;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.delete-button:hover {
+  background: #7f1d1d;
+}

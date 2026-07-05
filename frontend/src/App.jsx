@@ -42,6 +42,19 @@ function App() {
     fetchDashboardData();
   }, []);
 
+  useEffect(() => {
+  if (!error && !successMessage) {
+    return;
+  }
+
+  const timerId = setTimeout(() => {
+    setError("");
+    setSuccessMessage("");
+  }, 3000);
+
+  return () => clearTimeout(timerId);
+}, [error, successMessage]);
+
   function handleInputChange(event) {
     const { name, value } = event.target;
 
@@ -80,6 +93,33 @@ function App() {
 
       setFormData(emptyForm);
       setSuccessMessage("Daily record added.");
+      await fetchDashboardData();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleDelete(date) {
+    const confirmed = window.confirm(`Delete record for ${date}?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setError("");
+    setSuccessMessage("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/daily/${date}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to delete daily record.");
+      }
+
+      setSuccessMessage("Daily record deleted.");
       await fetchDashboardData();
     } catch (err) {
       setError(err.message);
@@ -198,6 +238,7 @@ function App() {
               <th>Hours</th>
               <th>Trips</th>
               <th>Avg hourly</th>
+              <th>Actions</th>
             </tr>
           </thead>
 
@@ -209,6 +250,15 @@ function App() {
                 <td>{record.online_hours.toFixed(2)}</td>
                 <td>{record.trips}</td>
                 <td>${record.avg_hourly.toFixed(2)}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="delete-button"
+                    onClick={() => handleDelete(record.date)}
+                  >
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

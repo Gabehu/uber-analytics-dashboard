@@ -54,7 +54,7 @@ def get_daily_data():
         """
         SELECT date, earnings, online_hours, trips, avg_hourly
         FROM daily_earnings
-        ORDER BY date
+        ORDER BY date DESC
         """
     )
 
