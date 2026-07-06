@@ -185,7 +185,24 @@ th {
 }
 
 table {
-  min-width: 1100px;
+  min-width: 760px;
+}
+
+.table-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.table-labels span {
+  background: #111827;
+  border: 1px solid #374151;
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: #bfdbfe;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .recap-card {

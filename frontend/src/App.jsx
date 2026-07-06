@@ -704,16 +704,10 @@ function App() {
             <tr>
               <th>Date</th>
               <th>Total</th>
-              <th>Fare</th>
-              <th>Tips</th>
-              <th>Promos</th>
-              <th>Hours</th>
-              <th>Trips</th>
               <th>$/hr</th>
-              <th>$/trip</th>
-              <th>Miles</th>
+              <th>Trips</th>
               <th>$/mile</th>
-              <th>Wallet</th>
+              <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -721,29 +715,21 @@ function App() {
           <tbody>
             {dailyRecords.map((record) => (
               <tr key={record.date}>
-                <td>{record.date}</td>
+                <td>{record.date.slice(5)}</td>
                 <td>${record.total_earnings.toFixed(2)}</td>
-                <td>${record.net_fare.toFixed(2)}</td>
-                <td>${record.tips.toFixed(2)}</td>
-                <td>${record.promotions.toFixed(2)}</td>
-                <td>{record.online_hours.toFixed(2)}</td>
-                <td>{record.trips}</td>
                 <td>${record.avg_hourly.toFixed(2)}</td>
-                <td>${record.avg_per_trip.toFixed(2)}</td>
-                <td>
-                  {record.miles_driven !== null
-                    ? record.miles_driven.toFixed(1)
-                    : "—"}
-                </td>
+                <td>{record.trips}</td>
                 <td>
                   {record.earnings_per_mile !== null
                     ? `$${record.earnings_per_mile.toFixed(2)}`
                     : "—"}
                 </td>
                 <td>
-                  {record.wallet_balance !== null
-                    ? `$${record.wallet_balance.toFixed(2)}`
-                    : "—"}
+                  <div className="table-labels">
+                    <span>{record.hourly_label}</span>
+                    <span>{record.promo_label}</span>
+                    <span>{record.mileage_label}</span>
+                  </div>
                 </td>
                 <td>
                   <button
