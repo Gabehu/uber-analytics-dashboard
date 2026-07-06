@@ -18,9 +18,14 @@ const emptyForm = {
 function App() {
   const [summary, setSummary] = useState(null);
   const [dailyRecords, setDailyRecords] = useState([]);
+  const latestRecord = dailyRecords.length > 0 ? dailyRecords[0] : null;
   const [formData, setFormData] = useState(emptyForm);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+
+  function formatPercent(value) {
+    return `${(value * 100).toFixed(1)}%`;
+  }
 
   async function fetchDashboardData() {
     try {
@@ -194,6 +199,102 @@ function App() {
         </section>
       ) : (
         <p>Loading summary...</p>
+      )}
+
+      {latestRecord && (
+        <section className="recap-card">
+          <div className="recap-header">
+            <div>
+              <p className="eyebrow">Latest day recap</p>
+              <h2>{latestRecord.date}</h2>
+            </div>
+
+            <div className="label-row">
+              <span>{latestRecord.hourly_label}</span>
+              <span>{latestRecord.promo_label}</span>
+              <span>{latestRecord.tip_label}</span>
+              <span>{latestRecord.mileage_label}</span>
+            </div>
+          </div>
+
+          <div className="recap-grid">
+            <div className="mini-card">
+              <p>Total</p>
+              <h3>${latestRecord.total_earnings.toFixed(2)}</h3>
+            </div>
+
+            <div className="mini-card">
+              <p>$/hr</p>
+              <h3>${latestRecord.avg_hourly.toFixed(2)}</h3>
+            </div>
+
+            <div className="mini-card">
+              <p>$/trip</p>
+              <h3>${latestRecord.avg_per_trip.toFixed(2)}</h3>
+            </div>
+
+            <div className="mini-card">
+              <p>$/mile</p>
+              <h3>
+                {latestRecord.earnings_per_mile !== null
+                  ? `$${latestRecord.earnings_per_mile.toFixed(2)}`
+                  : "—"}
+              </h3>
+            </div>
+          </div>
+
+          <div className="breakdown-grid">
+            <div>
+              <p>Fare</p>
+              <strong>${latestRecord.net_fare.toFixed(2)}</strong>
+              <span>{formatPercent(latestRecord.fare_share)}</span>
+            </div>
+
+            <div>
+              <p>Tips</p>
+              <strong>${latestRecord.tips.toFixed(2)}</strong>
+              <span>{formatPercent(latestRecord.tip_share)}</span>
+            </div>
+
+            <div>
+              <p>Promos</p>
+              <strong>${latestRecord.promotions.toFixed(2)}</strong>
+              <span>{formatPercent(latestRecord.promo_share)}</span>
+            </div>
+          </div>
+
+          <div className="recap-details">
+            <p>
+              <strong>Online hours:</strong>{" "}
+              {latestRecord.online_hours.toFixed(2)}
+            </p>
+
+            <p>
+              <strong>Trips:</strong> {latestRecord.trips}
+            </p>
+
+            <p>
+              <strong>Miles:</strong>{" "}
+              {latestRecord.miles_driven !== null
+                ? latestRecord.miles_driven.toFixed(1)
+                : "Not logged"}
+            </p>
+
+            <p>
+              <strong>Wallet:</strong>{" "}
+              {latestRecord.wallet_balance !== null
+                ? `$${latestRecord.wallet_balance.toFixed(2)}`
+                : "Not logged"}
+            </p>
+          </div>
+
+          {latestRecord.notes && (
+            <div className="recap-notes">
+              <strong>Notes:</strong>
+              <p>{latestRecord.notes}</p>
+            </div>
+          )}
+        </section>
       )}
 
       <section className="form-section">

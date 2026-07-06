@@ -33,5 +33,12 @@ class DailyRecord(BaseModel):
     avg_per_trip: float
     miles_driven: float | None = None
     earnings_per_mile: float | None = None
+    fare_share: float
+    tip_share: float
+    promo_share: float
+    hourly_label: str
+    promo_label: str
+    tip_label: str
+    mileage_label: str
     wallet_balance: float | None = None
     notes: str | None = None

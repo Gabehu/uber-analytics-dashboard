@@ -9,12 +9,56 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def get_hourly_label(avg_hourly: float):
+    if avg_hourly >= 30:
+        return "Strong hourly"
+    if avg_hourly >= 25:
+        return "Good hourly"
+    if avg_hourly >= 20:
+        return "Acceptable hourly"
+    if avg_hourly >= 15:
+        return "Weak hourly"
+    return "Bad hourly"
+
+
+def get_promo_label(promo_share: float):
+    if promo_share >= 0.25:
+        return "Promo-carried"
+    if promo_share >= 0.10:
+        return "Promo helped"
+    return "Organic earnings"
+
+
+def get_tip_label(tip_share: float):
+    if tip_share >= 0.50:
+        return "Tip-carried"
+    if tip_share >= 0.35:
+        return "Solid tips"
+    if tip_share < 0.25:
+        return "Weak tips"
+    return "Normal tips"
+
+
+def get_mileage_label(earnings_per_mile):
+    if earnings_per_mile is None:
+        return "Mileage not logged"
+    if earnings_per_mile >= 1.50:
+        return "Strong mileage"
+    if earnings_per_mile >= 1.00:
+        return "Solid mileage"
+    if earnings_per_mile >= 0.75:
+        return "Questionable mileage"
+    return "Weak mileage"
 
 def calculate_daily_metrics(record):
     total_earnings = record.net_fare + record.tips + record.promotions
 
     avg_hourly = total_earnings / record.online_hours if record.online_hours > 0 else 0
     avg_per_trip = total_earnings / record.trips if record.trips > 0 else 0
+
+    fare_share = record.net_fare / total_earnings if total_earnings > 0 else 0
+    tip_share = record.tips / total_earnings if total_earnings > 0 else 0
+    promo_share = record.promotions / total_earnings if total_earnings > 0 else 0
 
     earnings_per_mile = None
     if record.miles_driven is not None and record.miles_driven > 0:
@@ -24,7 +68,14 @@ def calculate_daily_metrics(record):
         "total_earnings": round(total_earnings, 2),
         "avg_hourly": round(avg_hourly, 2),
         "avg_per_trip": round(avg_per_trip, 2),
+        "fare_share": round(fare_share, 4),
+        "tip_share": round(tip_share, 4),
+        "promo_share": round(promo_share, 4),
         "earnings_per_mile": round(earnings_per_mile, 2) if earnings_per_mile is not None else None,
+        "hourly_label": get_hourly_label(avg_hourly),
+        "promo_label": get_promo_label(promo_share),
+        "tip_label": get_tip_label(tip_share),
+        "mileage_label": get_mileage_label(earnings_per_mile),
     }
 
 
@@ -47,6 +98,13 @@ def initialize_database():
             avg_per_trip REAL NOT NULL,
             miles_driven REAL,
             earnings_per_mile REAL,
+            fare_share REAL NOT NULL,
+            tip_share REAL NOT NULL,
+            promo_share REAL NOT NULL,
+            hourly_label TEXT NOT NULL,
+            promo_label TEXT NOT NULL,
+            tip_label TEXT NOT NULL,
+            mileage_label TEXT NOT NULL,
             wallet_balance REAL,
             notes TEXT
         )
@@ -90,13 +148,21 @@ def initialize_database():
     ]
 
     for record in sample_data:
-        total_earnings = record["net_fare"] + record["tips"] + record["promotions"]
-        avg_hourly = total_earnings / record["online_hours"] if record["online_hours"] > 0 else 0
-        avg_per_trip = total_earnings / record["trips"] if record["trips"] > 0 else 0
+        class SeedRecord:
+            def __init__(self, data):
+                self.date = data["date"]
+                self.online_hours = data["online_hours"]
+                self.trips = data["trips"]
+                self.net_fare = data["net_fare"]
+                self.tips = data["tips"]
+                self.promotions = data["promotions"]
+                self.miles_driven = data["miles_driven"]
+                self.wallet_balance = data["wallet_balance"]
+                self.notes = data["notes"]
 
-        earnings_per_mile = None
-        if record["miles_driven"] is not None and record["miles_driven"] > 0:
-            earnings_per_mile = total_earnings / record["miles_driven"]
+
+        seed_record = SeedRecord(record)
+        metrics = calculate_daily_metrics(seed_record)
 
         cursor.execute(
             """
@@ -113,10 +179,17 @@ def initialize_database():
                 avg_per_trip,
                 miles_driven,
                 earnings_per_mile,
+                fare_share,
+                tip_share,
+                promo_share,
+                hourly_label,
+                promo_label,
+                tip_label,
+                mileage_label,
                 wallet_balance,
                 notes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["date"],
@@ -125,11 +198,18 @@ def initialize_database():
                 record["net_fare"],
                 record["tips"],
                 record["promotions"],
-                round(total_earnings, 2),
-                round(avg_hourly, 2),
-                round(avg_per_trip, 2),
+                metrics["total_earnings"],
+                metrics["avg_hourly"],
+                metrics["avg_per_trip"],
                 record["miles_driven"],
-                round(earnings_per_mile, 2) if earnings_per_mile is not None else None,
+                metrics["earnings_per_mile"],
+                metrics["fare_share"],
+                metrics["tip_share"],
+                metrics["promo_share"],
+                metrics["hourly_label"],
+                metrics["promo_label"],
+                metrics["tip_label"],
+                metrics["mileage_label"],
                 record["wallet_balance"],
                 record["notes"],
             ),
@@ -157,6 +237,13 @@ def get_daily_data():
             avg_per_trip,
             miles_driven,
             earnings_per_mile,
+            fare_share,
+            tip_share,
+            promo_share,
+            hourly_label,
+            promo_label,
+            tip_label,
+            mileage_label,
             wallet_balance,
             notes
         FROM daily_logs
@@ -224,10 +311,17 @@ def create_daily_record(record):
             avg_per_trip,
             miles_driven,
             earnings_per_mile,
+            fare_share,
+            tip_share,
+            promo_share,
+            hourly_label,
+            promo_label,
+            tip_label,
+            mileage_label,
             wallet_balance,
             notes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record.date,
@@ -241,6 +335,13 @@ def create_daily_record(record):
             metrics["avg_per_trip"],
             record.miles_driven,
             metrics["earnings_per_mile"],
+            metrics["fare_share"],
+            metrics["tip_share"],
+            metrics["promo_share"],
+            metrics["hourly_label"],
+            metrics["promo_label"],
+            metrics["tip_label"],
+            metrics["mileage_label"],
             record.wallet_balance,
             record.notes,
         ),
@@ -261,6 +362,13 @@ def create_daily_record(record):
         "avg_per_trip": metrics["avg_per_trip"],
         "miles_driven": record.miles_driven,
         "earnings_per_mile": metrics["earnings_per_mile"],
+        "fare_share": metrics["fare_share"],
+        "tip_share": metrics["tip_share"],
+        "promo_share": metrics["promo_share"],
+        "hourly_label": metrics["hourly_label"],
+        "promo_label": metrics["promo_label"],
+        "tip_label": metrics["tip_label"],
+        "mileage_label": metrics["mileage_label"],
         "wallet_balance": record.wallet_balance,
         "notes": record.notes,
     }
