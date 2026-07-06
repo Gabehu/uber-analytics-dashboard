@@ -19,6 +19,7 @@ function App() {
   const [summary, setSummary] = useState(null);
   const [dailyRecords, setDailyRecords] = useState([]);
   const latestRecord = dailyRecords.length > 0 ? dailyRecords[0] : null;
+  const [selectedWeekStart, setSelectedWeekStart] = useState(null);
 
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
@@ -54,9 +55,29 @@ function App() {
     return `${wholeHours}h ${minutes}m`;
   }
 
-  const weeklyChartData = latestRecord
+  function changeWeek(offsetInDays) {
+    if (!selectedWeekStart) {
+      return;
+    }
+
+    const currentWeekStart = new Date(`${selectedWeekStart}T00:00:00`);
+    currentWeekStart.setDate(currentWeekStart.getDate() + offsetInDays);
+
+    setSelectedWeekStart(formatDateForInput(currentWeekStart));
+  }
+
+  function goToLatestWeek() {
+    if (!latestRecord) {
+      return;
+    }
+
+    const latestWeekStart = getWeekStart(latestRecord.date);
+    setSelectedWeekStart(formatDateForInput(latestWeekStart));
+  }
+
+  const weeklyChartData = selectedWeekStart
     ? (() => {
-        const weekStart = getWeekStart(latestRecord.date);
+        const weekStart = new Date(`${selectedWeekStart}T00:00:00`);
 
         return Array.from({ length: 7 }, (_, index) => {
           const currentDate = new Date(weekStart);
@@ -185,6 +206,13 @@ function App() {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  useEffect(() => {
+    if (latestRecord && selectedWeekStart === null) {
+      const weekStart = getWeekStart(latestRecord.date);
+      setSelectedWeekStart(formatDateForInput(weekStart));
+    }
+  }, [latestRecord, selectedWeekStart]);
 
   useEffect(() => {
     if (!error && !successMessage) {
@@ -436,11 +464,26 @@ function App() {
           <div className="weekly-chart-top">
             <div>
               <p className="eyebrow">Weekly earnings</p>
-              <h2>
-                {weekStartDate && weekEndDate
-                  ? `${formatShortDate(weekStartDate)} - ${formatShortDate(weekEndDate)}`
-                  : "Current week"}
-              </h2>
+
+              <div className="week-nav">
+                <button type="button" onClick={() => changeWeek(-7)}>
+                  ←
+                </button>
+
+                <h2>
+                  {weekStartDate && weekEndDate
+                    ? `${formatShortDate(weekStartDate)} - ${formatShortDate(weekEndDate)}`
+                    : "Current week"}
+                </h2>
+
+                <button type="button" onClick={() => changeWeek(7)}>
+                  →
+                </button>
+              </div>
+
+              <button type="button" className="latest-week-button" onClick={goToLatestWeek}>
+                Latest week
+              </button>
             </div>
 
             <div className="weekly-total">

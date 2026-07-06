@@ -475,3 +475,40 @@ table {
     font-size: 12px;
   }
 }
+
+.week-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.week-nav h2 {
+  margin: 0;
+}
+
+.week-nav button,
+.latest-week-button {
+  border: 1px solid #374151;
+  background: #111827;
+  color: #f9fafb;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.week-nav button {
+  width: 36px;
+  height: 36px;
+  font-size: 18px;
+}
+
+.week-nav button:hover,
+.latest-week-button:hover {
+  background: #1e293b;
+}
+
+.latest-week-button {
+  margin-top: 10px;
+  padding: 8px 12px;
+  color: #bfdbfe;
+}
