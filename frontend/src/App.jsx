@@ -19,6 +19,140 @@ function App() {
   const [summary, setSummary] = useState(null);
   const [dailyRecords, setDailyRecords] = useState([]);
   const latestRecord = dailyRecords.length > 0 ? dailyRecords[0] : null;
+
+  function getWeekStart(dateString) {
+    const date = new Date(`${dateString}T00:00:00`);
+    const day = date.getDay(); // Sunday = 0, Monday = 1
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+
+    const monday = new Date(date);
+    monday.setDate(date.getDate() + diffToMonday);
+
+    return monday;
+  }
+
+  function formatDateForInput(date) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  function formatShortDate(date) {
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  function formatHoursAndMinutes(hours) {
+    const totalMinutes = Math.round(hours * 60);
+    const wholeHours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    if (wholeHours === 0) {
+      return `${minutes}m`;
+    }
+
+    return `${wholeHours}h ${minutes}m`;
+  }
+
+  const weeklyChartData = latestRecord
+    ? (() => {
+        const weekStart = getWeekStart(latestRecord.date);
+
+        return Array.from({ length: 7 }, (_, index) => {
+          const currentDate = new Date(weekStart);
+          currentDate.setDate(weekStart.getDate() + index);
+
+          const dateKey = formatDateForInput(currentDate);
+          const matchingRecord = dailyRecords.find(
+            (record) => record.date === dateKey
+          );
+
+          return {
+            date: dateKey,
+            dayLabel: currentDate.toLocaleDateString("en-US", {
+              weekday: "short",
+            }),
+            shortDate: currentDate.getDate(),
+            earnings: matchingRecord ? matchingRecord.total_earnings : 0,
+            trips: matchingRecord ? matchingRecord.trips : 0,
+            onlineHours: matchingRecord ? matchingRecord.online_hours : 0,
+          };
+        });
+      })()
+    : [];
+
+  const weeklyTotalEarnings = weeklyChartData.reduce(
+    (total, day) => total + day.earnings,
+    0
+  );
+
+  const weeklyTotalTrips = weeklyChartData.reduce(
+    (total, day) => total + day.trips,
+    0
+  );
+
+  const weeklyTotalHours = weeklyChartData.reduce(
+    (total, day) => total + day.onlineHours,
+    0
+  );
+
+  const weeklyAverageHourly =
+    weeklyTotalHours > 0 ? weeklyTotalEarnings / weeklyTotalHours : 0;
+
+  const weeklyRecords = latestRecord
+  ? dailyRecords.filter((record) =>
+      weeklyChartData.some((day) => day.date === record.date)
+    )
+  : [];
+
+  const weeklyNetFare = weeklyRecords.reduce(
+    (total, record) => total + record.net_fare,
+    0
+  );
+
+  const weeklyTips = weeklyRecords.reduce(
+    (total, record) => total + record.tips,
+    0
+  );
+
+  const weeklyPromotions = weeklyRecords.reduce(
+    (total, record) => total + record.promotions,
+    0
+  );
+  
+  const weeklyFareShare =
+    weeklyTotalEarnings > 0 ? weeklyNetFare / weeklyTotalEarnings : 0;
+
+  const weeklyTipShare =
+    weeklyTotalEarnings > 0 ? weeklyTips / weeklyTotalEarnings : 0;
+
+  const weeklyPromoShare =
+    weeklyTotalEarnings > 0 ? weeklyPromotions / weeklyTotalEarnings : 0;
+
+  const weeklyAveragePerTrip =
+    weeklyTotalTrips > 0 ? weeklyTotalEarnings / weeklyTotalTrips : 0;
+
+  const weeklyMiles = weeklyRecords.reduce((total, record) => {
+    if (record.miles_driven === null) {
+      return total;
+    }
+
+    return total + record.miles_driven;
+  }, 0);
+
+  const weeklyEarningsPerMile =
+    weeklyMiles > 0 ? weeklyTotalEarnings / weeklyMiles : null;
+
+  const maxWeeklyEarnings =
+    weeklyChartData.length > 0
+      ? Math.max(...weeklyChartData.map((day) => day.earnings))
+      : 0;
+
+  const weekStartDate =
+    weeklyChartData.length > 0 ? new Date(`${weeklyChartData[0].date}T00:00:00`) : null;
+
+  const weekEndDate =
+    weeklyChartData.length > 0 ? new Date(`${weeklyChartData[6].date}T00:00:00`) : null;
   const [formData, setFormData] = useState(emptyForm);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -294,6 +428,111 @@ function App() {
               <p>{latestRecord.notes}</p>
             </div>
           )}
+        </section>
+      )}
+
+      {weeklyChartData.length > 0 && (
+        <section className="chart-section">
+          <div className="weekly-chart-top">
+            <div>
+              <p className="eyebrow">Weekly earnings</p>
+              <h2>
+                {weekStartDate && weekEndDate
+                  ? `${formatShortDate(weekStartDate)} - ${formatShortDate(weekEndDate)}`
+                  : "Current week"}
+              </h2>
+            </div>
+
+            <div className="weekly-total">
+              <p>Total</p>
+              <h3>${weeklyTotalEarnings.toFixed(2)}</h3>
+            </div>
+          </div>
+
+          <div className="weekly-bars">
+            {weeklyChartData.map((day) => {
+              const barHeight =
+                maxWeeklyEarnings > 0
+                  ? (day.earnings / maxWeeklyEarnings) * 100
+                  : 0;
+
+              return (
+                <div className="weekly-bar-item" key={day.date}>
+                  <div className="weekly-bar-value">
+                    {day.earnings > 0 ? `$${day.earnings.toFixed(0)}` : ""}
+                  </div>
+
+                  <div className="weekly-bar-track">
+                    <div
+                      className={`weekly-bar-fill ${
+                        day.earnings === 0 ? "empty-bar" : ""
+                      }`}
+                      style={{ height: `${barHeight}%` }}
+                    ></div>
+                  </div>
+
+                  <div className="weekly-day-label">{day.shortDate}</div>
+                  <div className="weekly-weekday-label">{day.dayLabel}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="weekly-stats">
+            <div>
+              <p>Online</p>
+              <strong>{formatHoursAndMinutes(weeklyTotalHours)}</strong>
+            </div>
+
+            <div>
+              <p>Trips</p>
+              <strong>{weeklyTotalTrips}</strong>
+            </div>
+
+            <div>
+              <p>Avg hourly</p>
+              <strong>${weeklyAverageHourly.toFixed(2)}</strong>
+            </div>
+
+            <div>
+              <p>Avg/trip</p>
+              <strong>${weeklyAveragePerTrip.toFixed(2)}</strong>
+            </div>
+          </div>
+
+          <div className="weekly-breakdown-stats">
+            <div>
+              <p>Net fare</p>
+              <strong>${weeklyNetFare.toFixed(2)}</strong>
+              <span>{formatPercent(weeklyFareShare)}</span>
+            </div>
+
+            <div>
+              <p>Tips</p>
+              <strong>${weeklyTips.toFixed(2)}</strong>
+              <span>{formatPercent(weeklyTipShare)}</span>
+            </div>
+
+            <div>
+              <p>Promotions</p>
+              <strong>${weeklyPromotions.toFixed(2)}</strong>
+              <span>{formatPercent(weeklyPromoShare)}</span>
+            </div>
+
+            <div>
+              <p>Miles</p>
+              <strong>{weeklyMiles > 0 ? weeklyMiles.toFixed(1) : "—"}</strong>
+            </div>
+
+            <div>
+              <p>$/mile</p>
+              <strong>
+                {weeklyEarningsPerMile !== null
+                  ? `$${weeklyEarningsPerMile.toFixed(2)}`
+                  : "—"}
+              </strong>
+            </div>
+          </div>
         </section>
       )}
 
