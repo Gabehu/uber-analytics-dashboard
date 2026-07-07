@@ -553,3 +553,36 @@ table {
 .view-button:hover {
   background: #1e40af;
 }
+
+.edit-button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #92400e;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.edit-button:hover {
+  background: #78350f;
+}
+
+.cancel-edit-button {
+  border: 1px solid #374151;
+  border-radius: 10px;
+  padding: 11px 16px;
+  background: #111827;
+  color: #f9fafb;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cancel-edit-button:hover {
+  background: #1e293b;
+}
+
+.entry-form input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}

@@ -179,6 +179,7 @@ function App() {
   const weekEndDate =
     weeklyChartData.length > 0 ? new Date(`${weeklyChartData[6].date}T00:00:00`) : null;
   const [formData, setFormData] = useState(emptyForm);
+  const [editingDate, setEditingDate] = useState(null);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -262,6 +263,35 @@ function App() {
     return value;
   }
 
+  function handleEdit(record) {
+    setEditingDate(record.date);
+    setSelectedRecordDate(record.date);
+
+    setFormData({
+      date: record.date,
+      online_hours: String(record.online_hours),
+      trips: String(record.trips),
+      net_fare: String(record.net_fare),
+      tips: String(record.tips),
+      promotions: String(record.promotions),
+      miles_driven:
+        record.miles_driven !== null ? String(record.miles_driven) : "",
+      wallet_balance:
+        record.wallet_balance !== null ? String(record.wallet_balance) : "",
+      notes: record.notes || "",
+    });
+
+    setError("");
+    setSuccessMessage("");
+  }
+
+  function cancelEdit() {
+    setEditingDate(null);
+    setFormData(emptyForm);
+    setError("");
+    setSuccessMessage("");
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
 
@@ -274,15 +304,26 @@ function App() {
       trips: Number(formData.trips),
       net_fare: Number(formData.net_fare),
       tips: Number(formData.tips),
-      promotions: Number(formData.promotions),
+      promotions: formData.promotions === "" ? 0 : Number(formData.promotions),
       miles_driven: optionalNumber(formData.miles_driven),
       wallet_balance: optionalNumber(formData.wallet_balance),
       notes: optionalText(formData.notes),
     };
 
+    if (!editingDate && dailyRecords.some((record) => record.date === newRecord.date)) {
+      setError("A daily record with this date already exists.");
+      return;
+    }
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/daily`, {
-        method: "POST",
+      const url = editingDate
+        ? `${API_BASE_URL}/api/daily/${editingDate}`
+        : `${API_BASE_URL}/api/daily`;
+
+      const method = editingDate ? "PUT" : "POST";
+
+      const response = await fetch(url, {
+        method,
         headers: {
           "Content-Type": "application/json",
         },
@@ -294,8 +335,21 @@ function App() {
         throw new Error(errorData.detail || "Failed to create daily record.");
       }
 
+      const savedRecord = await response.json();
+
       setFormData(emptyForm);
-      setSuccessMessage("Daily record added.");
+      setSelectedRecordDate(savedRecord.date);
+
+      const savedRecordWeekStart = getWeekStart(savedRecord.date);
+      setSelectedWeekStart(formatDateForInput(savedRecordWeekStart));
+
+      if (editingDate) {
+        setEditingDate(null);
+        setSuccessMessage("Daily record updated.");
+      } else {
+        setSuccessMessage("Daily record added.");
+      }
+
       await fetchDashboardData();
     } catch (err) {
       setError(err.message);
@@ -324,6 +378,11 @@ function App() {
 
       if (selectedRecordDate === date) {
         setSelectedRecordDate(null);
+      }
+
+      if (editingDate === date) {
+        setEditingDate(null);
+        setFormData(emptyForm);
       }
 
       setSuccessMessage("Daily record deleted.");
@@ -594,7 +653,7 @@ function App() {
       )}
 
       <section className="form-section">
-        <h2>Add daily log</h2>
+        <h2>{editingDate ? `Edit daily log: ${editingDate}` : "Add daily log"}</h2>
 
         <form onSubmit={handleSubmit} className="entry-form">
           <label>
@@ -605,6 +664,7 @@ function App() {
               value={formData.date}
               onChange={handleInputChange}
               required
+              disabled={editingDate !== null}
             />
           </label>
 
@@ -647,24 +707,23 @@ function App() {
           </label>
 
           <label>
-            Tips
-            <input
-              type="number"
-              name="tips"
-              value={formData.tips}
-              onChange={handleInputChange}
-              step="0.01"
-              min="0"
-              required
-            />
-          </label>
-
-          <label>
             Promotions
             <input
               type="number"
               name="promotions"
               value={formData.promotions}
+              onChange={handleInputChange}
+              step="0.01"
+              min="0"
+            />
+          </label>
+
+          <label>
+            Tips
+            <input
+              type="number"
+              name="tips"
+              value={formData.tips}
               onChange={handleInputChange}
               step="0.01"
               min="0"
@@ -706,7 +765,13 @@ function App() {
             />
           </label>
 
-          <button type="submit">Add log</button>
+          <button type="submit">{editingDate ? "Update log" : "Add log"}</button>
+
+          {editingDate && (
+            <button type="button" className="cancel-edit-button" onClick={cancelEdit}>
+              Cancel edit
+            </button>
+          )}
         </form>
       </section>
 
@@ -756,6 +821,14 @@ function App() {
                     onClick={() => setSelectedRecordDate(record.date)}
                   >
                     View
+                  </button>
+
+                  <button
+                    type="button"
+                    className="edit-button"
+                    onClick={() => handleEdit(record)}
+                  >
+                    Edit
                   </button>
 
                   <button

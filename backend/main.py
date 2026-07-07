@@ -7,6 +7,7 @@ from database import (
     get_summary_data,
     get_daily_data,
     create_daily_record,
+    update_daily_record,
     delete_daily_record,
 )
 from schemas import Summary, DailyRecord, DailyRecordCreate
@@ -59,6 +60,17 @@ def create_daily(record: DailyRecordCreate):
             detail="A daily record with this date already exists."
         )
 
+@app.put("/api/daily/{date}", response_model=DailyRecord)
+def update_daily(date: str, record: DailyRecordCreate):
+    updated_record = update_daily_record(date, record)
+
+    if updated_record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No daily record found for this date."
+        )
+
+    return updated_record
 
 @app.delete("/api/daily/{date}")
 def delete_daily(date: str):

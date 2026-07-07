@@ -373,6 +373,91 @@ def create_daily_record(record):
         "notes": record.notes,
     }
 
+def update_daily_record(date: str, record):
+    metrics = calculate_daily_metrics(record)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE daily_logs
+        SET
+            online_hours = ?,
+            trips = ?,
+            net_fare = ?,
+            tips = ?,
+            promotions = ?,
+            total_earnings = ?,
+            avg_hourly = ?,
+            avg_per_trip = ?,
+            miles_driven = ?,
+            earnings_per_mile = ?,
+            fare_share = ?,
+            tip_share = ?,
+            promo_share = ?,
+            hourly_label = ?,
+            promo_label = ?,
+            tip_label = ?,
+            mileage_label = ?,
+            wallet_balance = ?,
+            notes = ?
+        WHERE date = ?
+        """,
+        (
+            record.online_hours,
+            record.trips,
+            record.net_fare,
+            record.tips,
+            record.promotions,
+            metrics["total_earnings"],
+            metrics["avg_hourly"],
+            metrics["avg_per_trip"],
+            record.miles_driven,
+            metrics["earnings_per_mile"],
+            metrics["fare_share"],
+            metrics["tip_share"],
+            metrics["promo_share"],
+            metrics["hourly_label"],
+            metrics["promo_label"],
+            metrics["tip_label"],
+            metrics["mileage_label"],
+            record.wallet_balance,
+            record.notes,
+            date,
+        ),
+    )
+
+    updated_count = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    if updated_count == 0:
+        return None
+
+    return {
+        "date": date,
+        "online_hours": record.online_hours,
+        "trips": record.trips,
+        "net_fare": record.net_fare,
+        "tips": record.tips,
+        "promotions": record.promotions,
+        "total_earnings": metrics["total_earnings"],
+        "avg_hourly": metrics["avg_hourly"],
+        "avg_per_trip": metrics["avg_per_trip"],
+        "miles_driven": record.miles_driven,
+        "earnings_per_mile": metrics["earnings_per_mile"],
+        "fare_share": metrics["fare_share"],
+        "tip_share": metrics["tip_share"],
+        "promo_share": metrics["promo_share"],
+        "hourly_label": metrics["hourly_label"],
+        "promo_label": metrics["promo_label"],
+        "tip_label": metrics["tip_label"],
+        "mileage_label": metrics["mileage_label"],
+        "wallet_balance": record.wallet_balance,
+        "notes": record.notes,
+    }
 
 def delete_daily_record(date: str):
     conn = get_connection()
