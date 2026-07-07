@@ -11,20 +11,23 @@ The goal of this project is not just to track Uber earnings, but to help underst
 - How did the week compare across days?
 - Did mileage make the day better or worse?
 
-## Current Status
+## Current status
 
-**Version 2.0** is a full-stack rebuild of the earlier local prototype.
+**Version 2.0.0 is stable.**
 
-The original v1/v1.1 version proved the basic idea as a local dashboard. V2 rebuilds the project with a separate frontend/backend structure and a more expandable foundation.
+Version 2.0 is a full-stack rebuild of the earlier local prototype. The original v1/v1.1 version proved the basic idea as a local dashboard. V2 rebuilds the project with a separate frontend/backend structure and a more expandable foundation.
 
-**Current stack:**
-- React/Vite frontend
-- FastAPI backend
-- SQLite local database
+Current version:
+
+```text
+React/Vite frontend
+FastAPI backend
+SQLite local database
+```
 
 ## Features
 
-### Daily Log Tracking
+### Daily log tracking
 
 Add daily Uber work logs with:
 
@@ -32,11 +35,11 @@ Add daily Uber work logs with:
 - Online hours
 - Trips
 - Net fare
+- Promotions, optional
 - Tips
-- Promotions
-- Optional miles driven
-- Optional wallet balance
-- Optional notes
+- Miles driven, optional
+- Wallet balance, optional
+- Notes, optional
 
 The backend calculates:
 
@@ -48,51 +51,78 @@ The backend calculates:
 - Tip share
 - Promotion share
 
-### Daily Recap
+### Full CRUD support
 
-The dashboard shows a latest-day recap card with:
+Daily logs support:
 
-- Total earnings
-- $/hour
-- $/trip
-- $/mile
-- Fare/tips/promotions breakdown
-- Mileage status
-- Wallet status
-- Notes
+- Create new logs
+- Read/view existing logs
+- Edit existing logs
+- Delete logs
 
-It also adds simple rule-based labels such as:
+The frontend updates the dashboard after changes, and the backend stores the data locally in SQLite.
 
-- Strong hourly
-- Good hourly
-- Acceptable hourly
-- Promo helped
-- Promo-carried
-- Solid tips
-- Normal tips
-- Mileage not logged
-- Strong mileage
+### Weekly earnings dashboard
 
-### Weekly Earnings View
+The main dashboard centers around a weekly earnings card with:
 
-The dashboard includes a weekly earnings chart with:
-
-- Monday–Sunday structure
+- Monday-Sunday structure
 - Weekly total earnings
 - Daily bar comparison
-- Week navigation
-- Online hours
-- Trips
-- Average hourly
-- Average per trip
+- Previous/next week navigation
+- Latest week button
+- Clickable daily bars
+- Weekly online hours
+- Weekly trips
+- Weekly average hourly
+- Weekly average per trip
 - Weekly net fare
 - Weekly tips
 - Weekly promotions
 - Weekly mileage and $/mile when mileage is logged
 
-### Daily Logs Table
+### Selected day mode
 
-The daily logs table gives a cleaner overview of logged days with:
+Clicking a daily bar switches the weekly card into selected-day mode.
+
+Selected-day mode shows:
+
+- Day total
+- Online hours
+- Trips
+- Average hourly
+- Average per trip
+- Net fare
+- Tips
+- Promotions
+- Miles and $/mile when logged
+- Wallet status
+- Notes when available
+
+Clicking the same selected bar again returns the card to weekly mode.
+
+### Rule-based labels
+
+The app adds simple rule-based labels to help interpret days quickly.
+
+Examples:
+
+- Strong hourly
+- Good hourly
+- Acceptable hourly
+- Weak hourly
+- Organic earnings
+- Promo helped
+- Promo-carried
+- Normal tips
+- Solid tips
+- Tip-carried
+- Mileage not logged
+- Strong mileage
+
+### Daily logs table
+
+The daily logs table gives a compact overview of logged days with:
 
 - Date
 - Total earnings
@@ -100,21 +130,36 @@ The daily logs table gives a cleaner overview of logged days with:
 - Trips
 - $/mile
 - Status labels
+- View action
+- Edit action
 - Delete action
 
-## Local Data Storage
+The table is meant for scanning and managing records, while the weekly card handles the main dashboard view.
 
-Daily logs are stored locally in SQLite. The local database is created at:
+### Input validation
 
-```
+The frontend includes basic validation for:
+
+- Duplicate dates
+- Online hours greater than 0
+- Trips greater than 0
+- Non-negative fare, tips, promotions, mileage, and wallet values
+
+Promotions can be left blank and are treated as `$0.00`.
+
+## Privacy
+
+This project is designed to keep personal Uber earnings data local.
+
+Daily logs are stored in a local SQLite database.
+
+The local database is created at:
+
+```text
 backend/uber_dashboard.db
 ```
 
 The database file is excluded from version control so real earnings data stays local.
-
-## Privacy
-
-This project is designed to keep personal Uber earnings data local. The SQLite database is ignored by Git and should not be committed.
 
 Recommended `.gitignore` entries:
 
@@ -132,9 +177,9 @@ frontend/node_modules/
 frontend/dist/
 ```
 
-## Project Structure
+## Project structure
 
-```
+```text
 Uber/
   backend/
     database.py
@@ -154,22 +199,24 @@ Uber/
   README.md
 ```
 
-## Tech Stack
+## Tech stack
 
-**Frontend**
+### Frontend
+
 - React
 - Vite
 - JavaScript
 - CSS
 
-**Backend**
+### Backend
+
 - Python
 - FastAPI
 - Pydantic
 - SQLite
 - Uvicorn
 
-## Run Locally
+## Run locally
 
 You need two terminals: one for the backend and one for the frontend.
 
@@ -205,13 +252,23 @@ Run the FastAPI backend:
 python -m uvicorn main:app --reload
 ```
 
-Backend runs at: `http://127.0.0.1:8000`
+Backend runs at:
 
-FastAPI docs are available at: `http://127.0.0.1:8000/docs`
+```text
+http://127.0.0.1:8000
+```
+
+FastAPI docs are available at:
+
+```text
+http://127.0.0.1:8000/docs
+```
 
 ### Frontend
 
-Open a second terminal. From the project root:
+Open a second terminal.
+
+From the project root:
 
 ```bash
 cd frontend
@@ -229,21 +286,26 @@ Run the Vite frontend:
 npm run dev
 ```
 
-Frontend runs at: `http://localhost:5173`
+Frontend runs at:
 
-## API Endpoints
+```text
+http://localhost:5173
+```
+
+## API endpoints
 
 Current backend endpoints:
 
-```
+```text
 GET    /
 GET    /api/summary
 GET    /api/daily
 POST   /api/daily
+PUT    /api/daily/{date}
 DELETE /api/daily/{date}
 ```
 
-### Example Daily Log POST Body
+### Example daily log POST body
 
 ```json
 {
@@ -251,81 +313,126 @@ DELETE /api/daily/{date}
   "online_hours": 4.25,
   "trips": 11,
   "net_fare": 58.40,
-  "tips": 41.20,
   "promotions": 15.00,
+  "tips": 41.20,
   "miles_driven": 55.0,
   "wallet_balance": 1452.90,
   "notes": "Good shift, promo helped, mileage test."
 }
 ```
 
-## Version History
+## Version history
 
 ### v1.1
-Local prototype built with Python, Streamlit, pandas, and SQLite. Included:
+
+Local prototype built with Python, Streamlit, pandas, and SQLite.
+
+Included:
+
 - Local data entry
 - SQLite storage
 - Daily recaps
 - Weekly summaries
 - Basic earnings/hourly charts
 
-### v2.0
-Full-stack rebuild. Includes:
+### v2.0.0
+
+Stable full-stack rebuild.
+
+Includes:
+
 - React/Vite frontend
 - FastAPI backend
 - SQLite database
 - Daily log form
-- Delete records from the frontend
+- Add/edit/delete support
 - Richer earnings breakdown
-- Latest-day recap card
+- Optional mileage, wallet, and notes
 - Weekly earnings chart
 - Week navigation
+- Clickable weekly bars
+- Selected-day mode inside the weekly card
 - Rule-based efficiency labels
-- Cleaner daily logs table
+- Compact daily logs table
+- Basic frontend validation
+- Local-only database storage
 
-## Planned Improvements
+## Planned improvements
 
-### Near-term
-- Add "View details" for any daily log
-- Improve form layout and validation
-- Add edit/update support for existing logs
-- Add better empty-state and loading-state handling
-- Add screenshots to README
+### v2.1: Mileage and time accuracy
 
-### Future Versions
+Planned v2.1 focus: make the app better at measuring the real cost of a shift.
 
-**Odometer-based mileage tracking**
+Possible additions:
+
+- Advanced tracking section in the daily log form
 - Start odometer
 - End Uber/work odometer
-- End home odometer
-- Business vs personal/post-shift miles
+- End home odometer, optional
+- Work start time
+- Uber stop time
+- Home/end time, optional
 
-**Separate time types**
-- Uber online time
+Calculated metrics:
+
+- Work miles
+- Total outing miles
+- Post-work/return miles
+- Miles per trip
+- Earnings per work mile
+- Earnings per total mile
 - Real work time
 - Full outing time
+- Post-work/return time
+- Earnings per real work hour
+- Earnings per full outing hour
 
-**Quest tracker**
-- Monday–Thursday and Friday–Sunday quest periods
-- Tier 1 and tier 2 bonus tracking
+The goal of v2.1 is to answer:
+
+- How much driving did this day actually cost?
+- How much unpaid return driving happened?
+- Was the day still good after mileage?
+- Was the Uber online hourly misleading compared to real time spent?
+
+### Future: Quest tracker
+
+Possible future quest tracking:
+
+- Monday-Thursday quest periods
+- Friday-Sunday quest periods
+- Tier 1 trip goal and bonus
+- Tier 2 trip goal and bonus
+- Current quest progress
 - Trips remaining
 - Bonus per remaining trip
 - Push/stop recommendation
 
-**Spending and leakage tracker**
+### Future: Spending and leakage tracker
+
+Possible future spending features:
+
 - Spending entries
+- Spending categories
+- Daily spending total
 - Wallet change
 - Retained earnings
 - Retention rate
 
-**Cushion tracker**
+### Future: Cushion tracker
+
+Possible future cushion features:
+
 - Wallet balance
 - Reserved obligations
 - Paid-off obligation status
 - Real cushion
+- Safe floor
 - Goal progress
 
-**Import tools**
+### Future: Import tools
+
+Possible future import features:
+
 - Weekly statement PDF extraction
 - Monthly tax summary extraction
 - Review-before-save import flow
