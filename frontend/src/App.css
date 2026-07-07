@@ -529,3 +529,27 @@ table {
   padding: 8px 12px;
   color: #bfdbfe;
 }
+
+.selected-row {
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.table-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.view-button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.view-button:hover {
+  background: #1e40af;
+}

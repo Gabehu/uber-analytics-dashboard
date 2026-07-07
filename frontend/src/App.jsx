@@ -19,6 +19,10 @@ function App() {
   const [summary, setSummary] = useState(null);
   const [dailyRecords, setDailyRecords] = useState([]);
   const latestRecord = dailyRecords.length > 0 ? dailyRecords[0] : null;
+  const [selectedRecordDate, setSelectedRecordDate] = useState(null);
+  const selectedRecord =
+    dailyRecords.find((record) => record.date === selectedRecordDate) ||
+    latestRecord;
   const [selectedWeekStart, setSelectedWeekStart] = useState(null);
 
   function getWeekStart(dateString) {
@@ -204,6 +208,12 @@ function App() {
   }
 
   useEffect(() => {
+    if (latestRecord && selectedRecordDate === null) {
+      setSelectedRecordDate(latestRecord.date);
+    }
+  }, [latestRecord, selectedRecordDate]);
+
+  useEffect(() => {
     fetchDashboardData();
   }, []);
 
@@ -312,6 +322,10 @@ function App() {
         throw new Error(errorData.detail || "Failed to delete daily record.");
       }
 
+      if (selectedRecordDate === date) {
+        setSelectedRecordDate(null);
+      }
+
       setSuccessMessage("Daily record deleted.");
       await fetchDashboardData();
     } catch (err) {
@@ -363,43 +377,43 @@ function App() {
         <p>Loading summary...</p>
       )}
 
-      {latestRecord && (
+      {selectedRecord && (
         <section className="recap-card">
           <div className="recap-header">
             <div>
-              <p className="eyebrow">Latest day recap</p>
-              <h2>{latestRecord.date}</h2>
+              <p className="eyebrow">Daily log recap</p>
+              <h2>{selectedRecord.date}</h2>
             </div>
 
             <div className="label-row">
-              <span>{latestRecord.hourly_label}</span>
-              <span>{latestRecord.promo_label}</span>
-              <span>{latestRecord.tip_label}</span>
-              <span>{latestRecord.mileage_label}</span>
+              <span>{selectedRecord.hourly_label}</span>
+              <span>{selectedRecord.promo_label}</span>
+              <span>{selectedRecord.tip_label}</span>
+              <span>{selectedRecord.mileage_label}</span>
             </div>
           </div>
 
           <div className="recap-grid">
             <div className="mini-card">
               <p>Total</p>
-              <h3>${latestRecord.total_earnings.toFixed(2)}</h3>
+              <h3>${selectedRecord.total_earnings.toFixed(2)}</h3>
             </div>
 
             <div className="mini-card">
               <p>$/hr</p>
-              <h3>${latestRecord.avg_hourly.toFixed(2)}</h3>
+              <h3>${selectedRecord.avg_hourly.toFixed(2)}</h3>
             </div>
 
             <div className="mini-card">
               <p>$/trip</p>
-              <h3>${latestRecord.avg_per_trip.toFixed(2)}</h3>
+              <h3>${selectedRecord.avg_per_trip.toFixed(2)}</h3>
             </div>
 
             <div className="mini-card">
               <p>$/mile</p>
               <h3>
-                {latestRecord.earnings_per_mile !== null
-                  ? `$${latestRecord.earnings_per_mile.toFixed(2)}`
+                {selectedRecord.earnings_per_mile !== null
+                  ? `$${selectedRecord.earnings_per_mile.toFixed(2)}`
                   : "—"}
               </h3>
             </div>
@@ -408,52 +422,52 @@ function App() {
           <div className="breakdown-grid">
             <div>
               <p>Fare</p>
-              <strong>${latestRecord.net_fare.toFixed(2)}</strong>
-              <span>{formatPercent(latestRecord.fare_share)}</span>
+              <strong>${selectedRecord.net_fare.toFixed(2)}</strong>
+              <span>{formatPercent(selectedRecord.fare_share)}</span>
             </div>
 
             <div>
               <p>Tips</p>
-              <strong>${latestRecord.tips.toFixed(2)}</strong>
-              <span>{formatPercent(latestRecord.tip_share)}</span>
+              <strong>${selectedRecord.tips.toFixed(2)}</strong>
+              <span>{formatPercent(selectedRecord.tip_share)}</span>
             </div>
 
             <div>
               <p>Promos</p>
-              <strong>${latestRecord.promotions.toFixed(2)}</strong>
-              <span>{formatPercent(latestRecord.promo_share)}</span>
+              <strong>${selectedRecord.promotions.toFixed(2)}</strong>
+              <span>{formatPercent(selectedRecord.promo_share)}</span>
             </div>
           </div>
 
           <div className="recap-details">
             <p>
               <strong>Online hours:</strong>{" "}
-              {latestRecord.online_hours.toFixed(2)}
+              {selectedRecord.online_hours.toFixed(2)}
             </p>
 
             <p>
-              <strong>Trips:</strong> {latestRecord.trips}
+              <strong>Trips:</strong> {selectedRecord.trips}
             </p>
 
             <p>
               <strong>Miles:</strong>{" "}
-              {latestRecord.miles_driven !== null
-                ? latestRecord.miles_driven.toFixed(1)
+              {selectedRecord.miles_driven !== null
+                ? selectedRecord.miles_driven.toFixed(1)
                 : "Not logged"}
             </p>
 
             <p>
               <strong>Wallet:</strong>{" "}
-              {latestRecord.wallet_balance !== null
-                ? `$${latestRecord.wallet_balance.toFixed(2)}`
+              {selectedRecord.wallet_balance !== null
+                ? `$${selectedRecord.wallet_balance.toFixed(2)}`
                 : "Not logged"}
             </p>
           </div>
 
-          {latestRecord.notes && (
+          {selectedRecord.notes && (
             <div className="recap-notes">
               <strong>Notes:</strong>
-              <p>{latestRecord.notes}</p>
+              <p>{selectedRecord.notes}</p>
             </div>
           )}
         </section>
@@ -714,7 +728,10 @@ function App() {
 
           <tbody>
             {dailyRecords.map((record) => (
-              <tr key={record.date}>
+              <tr
+                key={record.date}
+                className={selectedRecord?.date === record.date ? "selected-row" : ""}
+              >
                 <td>{record.date.slice(5)}</td>
                 <td>${record.total_earnings.toFixed(2)}</td>
                 <td>${record.avg_hourly.toFixed(2)}</td>
@@ -732,6 +749,15 @@ function App() {
                   </div>
                 </td>
                 <td>
+                <div className="table-actions">
+                  <button
+                    type="button"
+                    className="view-button"
+                    onClick={() => setSelectedRecordDate(record.date)}
+                  >
+                    View
+                  </button>
+
                   <button
                     type="button"
                     className="delete-button"
@@ -739,7 +765,8 @@ function App() {
                   >
                     Delete
                   </button>
-                </td>
+                </div>
+              </td>
               </tr>
             ))}
           </tbody>
