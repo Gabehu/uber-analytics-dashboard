@@ -59,6 +59,14 @@ function App() {
     return `${wholeHours}h ${minutes}m`;
   }
 
+  function handleWeeklyBarClick(day) {
+    if (!day.hasRecord) {
+      return;
+    }
+
+    setSelectedRecordDate(day.date);
+  }
+
   function changeWeek(offsetInDays) {
     if (!selectedWeekStart) {
       return;
@@ -101,6 +109,7 @@ function App() {
             earnings: matchingRecord ? matchingRecord.total_earnings : 0,
             trips: matchingRecord ? matchingRecord.trips : 0,
             onlineHours: matchingRecord ? matchingRecord.online_hours : 0,
+            hasRecord: Boolean(matchingRecord),
           };
         });
       })()
@@ -573,7 +582,15 @@ function App() {
                   : 0;
 
               return (
-                <div className="weekly-bar-item" key={day.date}>
+                <button
+                  type="button"
+                  className={`weekly-bar-item ${
+                    selectedRecord?.date === day.date ? "selected-weekly-bar" : ""
+                  } ${day.hasRecord ? "clickable-weekly-bar" : ""}`}
+                  key={day.date}
+                  onClick={() => handleWeeklyBarClick(day)}
+                  disabled={!day.hasRecord}
+                >
                   <div className="weekly-bar-value">
                     {day.earnings > 0 ? `$${day.earnings.toFixed(0)}` : ""}
                   </div>
@@ -589,7 +606,7 @@ function App() {
 
                   <div className="weekly-day-label">{day.shortDate}</div>
                   <div className="weekly-weekday-label">{day.dayLabel}</div>
-                </div>
+                </button>
               );
             })}
           </div>

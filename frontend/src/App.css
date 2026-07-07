@@ -379,6 +379,38 @@ table {
   flex-direction: column;
   align-items: center;
   height: 240px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.clickable-weekly-bar {
+  cursor: pointer;
+}
+
+.clickable-weekly-bar:hover .weekly-bar-track {
+  border-color: #60a5fa;
+}
+
+.selected-weekly-bar .weekly-bar-track {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25);
+}
+
+.selected-weekly-bar .weekly-bar-fill {
+  background: #3b82f6;
+}
+
+.selected-weekly-bar .weekly-day-label,
+.selected-weekly-bar .weekly-weekday-label {
+  color: #60a5fa;
+  font-weight: 700;
+}
+
+.weekly-bar-item:disabled {
+  cursor: default;
 }
 
 .weekly-bar-value {
@@ -397,6 +429,10 @@ table {
   border: 1px solid #374151;
   display: flex;
   align-items: end;
+}
+
+.weekly-bar-item:disabled .weekly-bar-track {
+  opacity: 0.55;
 }
 
 .weekly-bar-fill {
