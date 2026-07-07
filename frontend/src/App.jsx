@@ -21,8 +21,7 @@ function App() {
   const latestRecord = dailyRecords.length > 0 ? dailyRecords[0] : null;
   const [selectedRecordDate, setSelectedRecordDate] = useState(null);
   const selectedRecord =
-    dailyRecords.find((record) => record.date === selectedRecordDate) ||
-    latestRecord;
+    dailyRecords.find((record) => record.date === selectedRecordDate) || null;
   const [selectedWeekStart, setSelectedWeekStart] = useState(null);
 
   function getWeekStart(dateString) {
@@ -61,6 +60,11 @@ function App() {
 
   function handleWeeklyBarClick(day) {
     if (!day.hasRecord) {
+      return;
+    }
+
+    if (selectedRecordDate === day.date) {
+      setSelectedRecordDate(null);
       return;
     }
 
@@ -119,6 +123,10 @@ function App() {
     (total, day) => total + day.earnings,
     0
   );
+
+  const selectedRecordIsInVisibleWeek =
+    selectedRecord &&
+    weeklyChartData.some((day) => day.date === selectedRecord.date);
 
   const weeklyTotalTrips = weeklyChartData.reduce(
     (total, day) => total + day.trips,
@@ -216,12 +224,6 @@ function App() {
       setError(err.message);
     }
   }
-
-  useEffect(() => {
-    if (latestRecord && selectedRecordDate === null) {
-      setSelectedRecordDate(latestRecord.date);
-    }
-  }, [latestRecord, selectedRecordDate]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -481,7 +483,9 @@ function App() {
         <section className="chart-section">
           <div className="weekly-chart-top">
             <div>
-              <p className="eyebrow">Weekly earnings</p>
+              <p className="eyebrow">
+                {selectedRecordIsInVisibleWeek ? "Selected day" : "Weekly earnings"}
+              </p>
 
               <div className="week-nav">
                 <button type="button" onClick={() => changeWeek(-7)}>
@@ -489,9 +493,11 @@ function App() {
                 </button>
 
                 <h2>
-                  {weekStartDate && weekEndDate
-                    ? `${formatShortDate(weekStartDate)} - ${formatShortDate(weekEndDate)}`
-                    : "Current week"}
+                  {selectedRecordIsInVisibleWeek
+                    ? selectedRecord.date
+                    : weekStartDate && weekEndDate
+                      ? `${formatShortDate(weekStartDate)} - ${formatShortDate(weekEndDate)}`
+                      : "Current week"}
                 </h2>
 
                 <button type="button" onClick={() => changeWeek(7)}>
@@ -505,8 +511,13 @@ function App() {
             </div>
 
             <div className="weekly-total">
-              <p>Total</p>
-              <h3>${weeklyTotalEarnings.toFixed(2)}</h3>
+              <p>{selectedRecordIsInVisibleWeek ? "Day total" : "Week total"}</p>
+              <h3>
+                $
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.total_earnings.toFixed(2)
+                  : weeklyTotalEarnings.toFixed(2)}
+              </h3>
             </div>
           </div>
 
@@ -550,58 +561,143 @@ function App() {
           <div className="weekly-stats">
             <div>
               <p>Online</p>
-              <strong>{formatHoursAndMinutes(weeklyTotalHours)}</strong>
+              <strong>
+                {selectedRecordIsInVisibleWeek
+                  ? formatHoursAndMinutes(selectedRecord.online_hours)
+                  : formatHoursAndMinutes(weeklyTotalHours)}
+              </strong>
             </div>
 
             <div>
               <p>Trips</p>
-              <strong>{weeklyTotalTrips}</strong>
+              <strong>
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.trips
+                  : weeklyTotalTrips}
+              </strong>
             </div>
 
             <div>
               <p>Avg hourly</p>
-              <strong>${weeklyAverageHourly.toFixed(2)}</strong>
+              <strong>
+                $
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.avg_hourly.toFixed(2)
+                  : weeklyAverageHourly.toFixed(2)}
+              </strong>
             </div>
 
             <div>
               <p>Avg/trip</p>
-              <strong>${weeklyAveragePerTrip.toFixed(2)}</strong>
+              <strong>
+                $
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.avg_per_trip.toFixed(2)
+                  : weeklyAveragePerTrip.toFixed(2)}
+              </strong>
             </div>
           </div>
 
           <div className="weekly-breakdown-stats">
             <div>
               <p>Net fare</p>
-              <strong>${weeklyNetFare.toFixed(2)}</strong>
-              <span>{formatPercent(weeklyFareShare)}</span>
+              <strong>
+                $
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.net_fare.toFixed(2)
+                  : weeklyNetFare.toFixed(2)}
+              </strong>
+              <span>
+                {selectedRecordIsInVisibleWeek
+                  ? formatPercent(selectedRecord.fare_share)
+                  : formatPercent(weeklyFareShare)}
+              </span>
             </div>
 
             <div>
               <p>Tips</p>
-              <strong>${weeklyTips.toFixed(2)}</strong>
-              <span>{formatPercent(weeklyTipShare)}</span>
+              <strong>
+                $
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.tips.toFixed(2)
+                  : weeklyTips.toFixed(2)}
+              </strong>
+              <span>
+                {selectedRecordIsInVisibleWeek
+                  ? formatPercent(selectedRecord.tip_share)
+                  : formatPercent(weeklyTipShare)}
+              </span>
             </div>
 
             <div>
               <p>Promotions</p>
-              <strong>${weeklyPromotions.toFixed(2)}</strong>
-              <span>{formatPercent(weeklyPromoShare)}</span>
+              <strong>
+                $
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.promotions.toFixed(2)
+                  : weeklyPromotions.toFixed(2)}
+              </strong>
+              <span>
+                {selectedRecordIsInVisibleWeek
+                  ? formatPercent(selectedRecord.promo_share)
+                  : formatPercent(weeklyPromoShare)}
+              </span>
             </div>
 
             <div>
               <p>Miles</p>
-              <strong>{weeklyMiles > 0 ? weeklyMiles.toFixed(1) : "—"}</strong>
+              <strong>
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.miles_driven !== null
+                    ? selectedRecord.miles_driven.toFixed(1)
+                    : "—"
+                  : weeklyMiles > 0
+                    ? weeklyMiles.toFixed(1)
+                    : "—"}
+              </strong>
             </div>
 
             <div>
               <p>$/mile</p>
               <strong>
-                {weeklyEarningsPerMile !== null
-                  ? `$${weeklyEarningsPerMile.toFixed(2)}`
-                  : "—"}
+                {selectedRecordIsInVisibleWeek
+                  ? selectedRecord.earnings_per_mile !== null
+                    ? `$${selectedRecord.earnings_per_mile.toFixed(2)}`
+                    : "—"
+                  : weeklyEarningsPerMile !== null
+                    ? `$${weeklyEarningsPerMile.toFixed(2)}`
+                    : "—"}
               </strong>
             </div>
           </div>
+
+          {selectedRecordIsInVisibleWeek && (
+            <div className="selected-day-extra">
+              <div className="selected-day-footer-top">
+                <div className="label-row">
+                  <span>{selectedRecord.hourly_label}</span>
+                  <span>{selectedRecord.promo_label}</span>
+                  <span>{selectedRecord.tip_label}</span>
+                  <span>{selectedRecord.mileage_label}</span>
+                </div>
+
+                <p>
+                  <strong>Wallet:</strong>{" "}
+                  {selectedRecord.wallet_balance !== null
+                    ? `$${selectedRecord.wallet_balance.toFixed(2)}`
+                    : "Not logged"}
+                </p>
+              </div>
+
+              {selectedRecord.notes && (
+                <div className="recap-notes">
+                  <strong>Notes:</strong>
+                  <p>{selectedRecord.notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+
         </section>
       )}
 
@@ -610,110 +706,6 @@ function App() {
           <p className="eyebrow">Weekly earnings</p>
           <h2>No weekly data yet</h2>
           <p>Add a daily log to build your first weekly earnings chart.</p>
-        </section>
-      )}
-
-      {selectedRecord && (
-        <section className="recap-card">
-          <div className="recap-header">
-            <div>
-              <p className="eyebrow">Daily log recap</p>
-              <h2>{selectedRecord.date}</h2>
-            </div>
-
-            <div className="label-row">
-              <span>{selectedRecord.hourly_label}</span>
-              <span>{selectedRecord.promo_label}</span>
-              <span>{selectedRecord.tip_label}</span>
-              <span>{selectedRecord.mileage_label}</span>
-            </div>
-          </div>
-
-          <div className="recap-grid">
-            <div className="mini-card">
-              <p>Total</p>
-              <h3>${selectedRecord.total_earnings.toFixed(2)}</h3>
-            </div>
-
-            <div className="mini-card">
-              <p>$/hr</p>
-              <h3>${selectedRecord.avg_hourly.toFixed(2)}</h3>
-            </div>
-
-            <div className="mini-card">
-              <p>$/trip</p>
-              <h3>${selectedRecord.avg_per_trip.toFixed(2)}</h3>
-            </div>
-
-            <div className="mini-card">
-              <p>$/mile</p>
-              <h3>
-                {selectedRecord.earnings_per_mile !== null
-                  ? `$${selectedRecord.earnings_per_mile.toFixed(2)}`
-                  : "—"}
-              </h3>
-            </div>
-          </div>
-
-          <div className="breakdown-grid">
-            <div>
-              <p>Fare</p>
-              <strong>${selectedRecord.net_fare.toFixed(2)}</strong>
-              <span>{formatPercent(selectedRecord.fare_share)}</span>
-            </div>
-
-            <div>
-              <p>Tips</p>
-              <strong>${selectedRecord.tips.toFixed(2)}</strong>
-              <span>{formatPercent(selectedRecord.tip_share)}</span>
-            </div>
-
-            <div>
-              <p>Promos</p>
-              <strong>${selectedRecord.promotions.toFixed(2)}</strong>
-              <span>{formatPercent(selectedRecord.promo_share)}</span>
-            </div>
-          </div>
-
-          <div className="recap-details">
-            <p>
-              <strong>Online hours:</strong>{" "}
-              {selectedRecord.online_hours.toFixed(2)}
-            </p>
-
-            <p>
-              <strong>Trips:</strong> {selectedRecord.trips}
-            </p>
-
-            <p>
-              <strong>Miles:</strong>{" "}
-              {selectedRecord.miles_driven !== null
-                ? selectedRecord.miles_driven.toFixed(1)
-                : "Not logged"}
-            </p>
-
-            <p>
-              <strong>Wallet:</strong>{" "}
-              {selectedRecord.wallet_balance !== null
-                ? `$${selectedRecord.wallet_balance.toFixed(2)}`
-                : "Not logged"}
-            </p>
-          </div>
-
-          {selectedRecord.notes && (
-            <div className="recap-notes">
-              <strong>Notes:</strong>
-              <p>{selectedRecord.notes}</p>
-            </div>
-          )}
-        </section>
-      )}
-
-      {!selectedRecord && (
-        <section className="empty-card">
-          <p className="eyebrow">Daily log recap</p>
-          <h2>No daily logs yet</h2>
-          <p>Add your first Uber daily log below to generate a recap.</p>
         </section>
       )}
 
@@ -890,9 +882,15 @@ function App() {
                       <button
                         type="button"
                         className="view-button"
-                        onClick={() => selectRecordAndWeek(record.date)}
+                        onClick={() => {
+                          if (selectedRecordDate === record.date) {
+                            setSelectedRecordDate(null);
+                          } else {
+                            selectRecordAndWeek(record.date);
+                          }
+                        }}
                       >
-                        View
+                        {selectedRecordDate === record.date ? "Hide" : "View"}
                       </button>
 
                       <button
