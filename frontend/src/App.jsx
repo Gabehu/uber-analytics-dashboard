@@ -64,7 +64,7 @@ function App() {
       return;
     }
 
-    setSelectedRecordDate(day.date);
+    selectRecordAndWeek(day.date);
   }
 
   function changeWeek(offsetInDays) {
@@ -272,9 +272,16 @@ function App() {
     return value;
   }
 
+  function selectRecordAndWeek(date) {
+    setSelectedRecordDate(date);
+
+    const recordWeekStart = getWeekStart(date);
+    setSelectedWeekStart(formatDateForInput(recordWeekStart));
+  }
+
   function handleEdit(record) {
     setEditingDate(record.date);
-    setSelectedRecordDate(record.date);
+    selectRecordAndWeek(record.date);
 
     setFormData({
       date: record.date,
@@ -445,102 +452,6 @@ function App() {
         <p>Loading summary...</p>
       )}
 
-      {selectedRecord && (
-        <section className="recap-card">
-          <div className="recap-header">
-            <div>
-              <p className="eyebrow">Daily log recap</p>
-              <h2>{selectedRecord.date}</h2>
-            </div>
-
-            <div className="label-row">
-              <span>{selectedRecord.hourly_label}</span>
-              <span>{selectedRecord.promo_label}</span>
-              <span>{selectedRecord.tip_label}</span>
-              <span>{selectedRecord.mileage_label}</span>
-            </div>
-          </div>
-
-          <div className="recap-grid">
-            <div className="mini-card">
-              <p>Total</p>
-              <h3>${selectedRecord.total_earnings.toFixed(2)}</h3>
-            </div>
-
-            <div className="mini-card">
-              <p>$/hr</p>
-              <h3>${selectedRecord.avg_hourly.toFixed(2)}</h3>
-            </div>
-
-            <div className="mini-card">
-              <p>$/trip</p>
-              <h3>${selectedRecord.avg_per_trip.toFixed(2)}</h3>
-            </div>
-
-            <div className="mini-card">
-              <p>$/mile</p>
-              <h3>
-                {selectedRecord.earnings_per_mile !== null
-                  ? `$${selectedRecord.earnings_per_mile.toFixed(2)}`
-                  : "—"}
-              </h3>
-            </div>
-          </div>
-
-          <div className="breakdown-grid">
-            <div>
-              <p>Fare</p>
-              <strong>${selectedRecord.net_fare.toFixed(2)}</strong>
-              <span>{formatPercent(selectedRecord.fare_share)}</span>
-            </div>
-
-            <div>
-              <p>Tips</p>
-              <strong>${selectedRecord.tips.toFixed(2)}</strong>
-              <span>{formatPercent(selectedRecord.tip_share)}</span>
-            </div>
-
-            <div>
-              <p>Promos</p>
-              <strong>${selectedRecord.promotions.toFixed(2)}</strong>
-              <span>{formatPercent(selectedRecord.promo_share)}</span>
-            </div>
-          </div>
-
-          <div className="recap-details">
-            <p>
-              <strong>Online hours:</strong>{" "}
-              {selectedRecord.online_hours.toFixed(2)}
-            </p>
-
-            <p>
-              <strong>Trips:</strong> {selectedRecord.trips}
-            </p>
-
-            <p>
-              <strong>Miles:</strong>{" "}
-              {selectedRecord.miles_driven !== null
-                ? selectedRecord.miles_driven.toFixed(1)
-                : "Not logged"}
-            </p>
-
-            <p>
-              <strong>Wallet:</strong>{" "}
-              {selectedRecord.wallet_balance !== null
-                ? `$${selectedRecord.wallet_balance.toFixed(2)}`
-                : "Not logged"}
-            </p>
-          </div>
-
-          {selectedRecord.notes && (
-            <div className="recap-notes">
-              <strong>Notes:</strong>
-              <p>{selectedRecord.notes}</p>
-            </div>
-          )}
-        </section>
-      )}
-
       {weeklyChartData.length > 0 && (
         <section className="chart-section">
           <div className="weekly-chart-top">
@@ -666,6 +577,102 @@ function App() {
               </strong>
             </div>
           </div>
+        </section>
+      )}
+
+      {selectedRecord && (
+        <section className="recap-card">
+          <div className="recap-header">
+            <div>
+              <p className="eyebrow">Daily log recap</p>
+              <h2>{selectedRecord.date}</h2>
+            </div>
+
+            <div className="label-row">
+              <span>{selectedRecord.hourly_label}</span>
+              <span>{selectedRecord.promo_label}</span>
+              <span>{selectedRecord.tip_label}</span>
+              <span>{selectedRecord.mileage_label}</span>
+            </div>
+          </div>
+
+          <div className="recap-grid">
+            <div className="mini-card">
+              <p>Total</p>
+              <h3>${selectedRecord.total_earnings.toFixed(2)}</h3>
+            </div>
+
+            <div className="mini-card">
+              <p>$/hr</p>
+              <h3>${selectedRecord.avg_hourly.toFixed(2)}</h3>
+            </div>
+
+            <div className="mini-card">
+              <p>$/trip</p>
+              <h3>${selectedRecord.avg_per_trip.toFixed(2)}</h3>
+            </div>
+
+            <div className="mini-card">
+              <p>$/mile</p>
+              <h3>
+                {selectedRecord.earnings_per_mile !== null
+                  ? `$${selectedRecord.earnings_per_mile.toFixed(2)}`
+                  : "—"}
+              </h3>
+            </div>
+          </div>
+
+          <div className="breakdown-grid">
+            <div>
+              <p>Fare</p>
+              <strong>${selectedRecord.net_fare.toFixed(2)}</strong>
+              <span>{formatPercent(selectedRecord.fare_share)}</span>
+            </div>
+
+            <div>
+              <p>Tips</p>
+              <strong>${selectedRecord.tips.toFixed(2)}</strong>
+              <span>{formatPercent(selectedRecord.tip_share)}</span>
+            </div>
+
+            <div>
+              <p>Promos</p>
+              <strong>${selectedRecord.promotions.toFixed(2)}</strong>
+              <span>{formatPercent(selectedRecord.promo_share)}</span>
+            </div>
+          </div>
+
+          <div className="recap-details">
+            <p>
+              <strong>Online hours:</strong>{" "}
+              {selectedRecord.online_hours.toFixed(2)}
+            </p>
+
+            <p>
+              <strong>Trips:</strong> {selectedRecord.trips}
+            </p>
+
+            <p>
+              <strong>Miles:</strong>{" "}
+              {selectedRecord.miles_driven !== null
+                ? selectedRecord.miles_driven.toFixed(1)
+                : "Not logged"}
+            </p>
+
+            <p>
+              <strong>Wallet:</strong>{" "}
+              {selectedRecord.wallet_balance !== null
+                ? `$${selectedRecord.wallet_balance.toFixed(2)}`
+                : "Not logged"}
+            </p>
+          </div>
+
+          {selectedRecord.notes && (
+            <div className="recap-notes">
+              <strong>Notes:</strong>
+              <p>{selectedRecord.notes}</p>
+            </div>
+          )}
         </section>
       )}
 
@@ -835,7 +842,7 @@ function App() {
                   <button
                     type="button"
                     className="view-button"
-                    onClick={() => setSelectedRecordDate(record.date)}
+                    onClick={() => selectRecordAndWeek(record.date)}
                   >
                     View
                   </button>
