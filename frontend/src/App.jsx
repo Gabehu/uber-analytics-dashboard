@@ -331,6 +331,31 @@ function App() {
       return;
     }
 
+    if (newRecord.online_hours <= 0) {
+      setError("Online hours must be greater than 0.");
+      return;
+    }
+
+    if (newRecord.trips <= 0) {
+      setError("Trips must be greater than 0.");
+      return;
+    }
+
+    if (newRecord.net_fare < 0 || newRecord.tips < 0 || newRecord.promotions < 0) {
+      setError("Fare, tips, and promotions cannot be negative.");
+      return;
+    }
+
+    if (newRecord.miles_driven !== null && newRecord.miles_driven < 0) {
+      setError("Miles driven cannot be negative.");
+      return;
+    }
+
+    if (newRecord.wallet_balance !== null && newRecord.wallet_balance < 0) {
+      setError("Wallet balance cannot be negative.");
+      return;
+    }
+
     try {
       const url = editingDate
         ? `${API_BASE_URL}/api/daily/${editingDate}`
@@ -580,6 +605,14 @@ function App() {
         </section>
       )}
 
+      {weeklyChartData.length === 0 && (
+        <section className="empty-card">
+          <p className="eyebrow">Weekly earnings</p>
+          <h2>No weekly data yet</h2>
+          <p>Add a daily log to build your first weekly earnings chart.</p>
+        </section>
+      )}
+
       {selectedRecord && (
         <section className="recap-card">
           <div className="recap-header">
@@ -673,6 +706,14 @@ function App() {
               <p>{selectedRecord.notes}</p>
             </div>
           )}
+        </section>
+      )}
+
+      {!selectedRecord && (
+        <section className="empty-card">
+          <p className="eyebrow">Daily log recap</p>
+          <h2>No daily logs yet</h2>
+          <p>Add your first Uber daily log below to generate a recap.</p>
         </section>
       )}
 
@@ -816,56 +857,64 @@ function App() {
           </thead>
 
           <tbody>
-            {dailyRecords.map((record) => (
-              <tr
-                key={record.date}
-                className={selectedRecord?.date === record.date ? "selected-row" : ""}
-              >
-                <td>{record.date.slice(5)}</td>
-                <td>${record.total_earnings.toFixed(2)}</td>
-                <td>${record.avg_hourly.toFixed(2)}</td>
-                <td>{record.trips}</td>
-                <td>
-                  {record.earnings_per_mile !== null
-                    ? `$${record.earnings_per_mile.toFixed(2)}`
-                    : "—"}
+            {dailyRecords.length === 0 ? (
+              <tr>
+                <td colSpan="7" className="empty-table-cell">
+                  No daily logs yet.
                 </td>
-                <td>
-                  <div className="table-labels">
-                    <span>{record.hourly_label}</span>
-                    <span>{record.promo_label}</span>
-                    <span>{record.mileage_label}</span>
-                  </div>
-                </td>
-                <td>
-                <div className="table-actions">
-                  <button
-                    type="button"
-                    className="view-button"
-                    onClick={() => selectRecordAndWeek(record.date)}
-                  >
-                    View
-                  </button>
-
-                  <button
-                    type="button"
-                    className="edit-button"
-                    onClick={() => handleEdit(record)}
-                  >
-                    Edit
-                  </button>
-
-                  <button
-                    type="button"
-                    className="delete-button"
-                    onClick={() => handleDelete(record.date)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </td>
               </tr>
-            ))}
+            ) : (
+              dailyRecords.map((record) => (
+                <tr
+                  key={record.date}
+                  className={selectedRecord?.date === record.date ? "selected-row" : ""}
+                >
+                  <td>{record.date.slice(5)}</td>
+                  <td>${record.total_earnings.toFixed(2)}</td>
+                  <td>${record.avg_hourly.toFixed(2)}</td>
+                  <td>{record.trips}</td>
+                  <td>
+                    {record.earnings_per_mile !== null
+                      ? `$${record.earnings_per_mile.toFixed(2)}`
+                      : "—"}
+                  </td>
+                  <td>
+                    <div className="table-labels">
+                      <span>{record.hourly_label}</span>
+                      <span>{record.promo_label}</span>
+                      <span>{record.mileage_label}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="table-actions">
+                      <button
+                        type="button"
+                        className="view-button"
+                        onClick={() => selectRecordAndWeek(record.date)}
+                      >
+                        View
+                      </button>
+
+                      <button
+                        type="button"
+                        className="edit-button"
+                        onClick={() => handleEdit(record)}
+                      >
+                        Edit
+                      </button>
+
+                      <button
+                        type="button"
+                        className="delete-button"
+                        onClick={() => handleDelete(record.date)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </section>

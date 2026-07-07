@@ -622,3 +622,26 @@ table {
   opacity: 0.65;
   cursor: not-allowed;
 }
+
+.empty-card {
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 14px;
+  padding: 22px;
+  margin-bottom: 40px;
+  text-align: center;
+}
+
+.empty-card h2 {
+  margin: 8px 0;
+}
+
+.empty-card p {
+  color: #9ca3af;
+}
+
+.empty-table-cell {
+  text-align: center;
+  color: #9ca3af;
+  padding: 28px;
+}
