@@ -814,7 +814,7 @@ def create_daily_record(record):
     }
 
 
-def update_daily_record(record):
+def update_daily_record(date: str, record):
     validate_daily_record(record)
     metrics = calculate_daily_metrics(record)
 
