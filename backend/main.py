@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,10 +13,18 @@ from database import (
 )
 from schemas import Summary, DailyRecord, DailyRecordCreate
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_database()
+    yield
+
+
 app = FastAPI(
     title="Uber Dashboard API",
     description="Backend API for Uber Dashboard v2",
-    version="0.1.0"
+    version="2.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -28,11 +37,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup_event():
-    initialize_database()
 
 
 @app.get("/")

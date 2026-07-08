@@ -12,10 +12,6 @@ def round_optional(value, decimals=2):
     return round(value, decimals)
 
 
-def get_optional_attr(record, field_name):
-    return getattr(record, field_name, None)
-
-
 def parse_12_hour_time_to_minutes(time_text):
     """
     Parses same-day 12-hour time strings like:
@@ -81,14 +77,14 @@ def validate_daily_record(record):
     Backend validation for daily log inputs.
     Frontend validation is helpful, but this is the real API gate.
     """
-        
-    start_odometer = get_optional_attr(record, "start_odometer")
-    end_work_odometer = get_optional_attr(record, "end_work_odometer")
-    end_home_odometer = get_optional_attr(record, "end_home_odometer")
 
-    work_start_time = get_optional_attr(record, "work_start_time")
-    uber_stop_time = get_optional_attr(record, "uber_stop_time")
-    home_end_time = get_optional_attr(record, "home_end_time")
+    start_odometer = record.start_odometer
+    end_work_odometer = record.end_work_odometer
+    end_home_odometer = record.end_home_odometer
+
+    work_start_time = record.work_start_time
+    uber_stop_time = record.uber_stop_time
+    home_end_time = record.home_end_time
 
     if record.online_hours <= 0:
         raise ValueError("Online hours must be greater than 0.")
@@ -171,7 +167,7 @@ def validate_daily_record(record):
     ):
         raise ValueError("Home/end time cannot be earlier than Uber stop time.")
 
-    wallet_balance = get_optional_attr(record, "wallet_balance")
+    wallet_balance = record.wallet_balance
     if wallet_balance is not None and wallet_balance < 0:
         raise ValueError("Wallet balance cannot be negative.")
 
@@ -233,15 +229,15 @@ def calculate_daily_metrics(record):
     tip_share = record.tips / total_earnings if total_earnings > 0 else 0
     promo_share = record.promotions / total_earnings if total_earnings > 0 else 0
 
-    miles_driven = get_optional_attr(record, "miles_driven")
+    miles_driven = record.miles_driven
 
-    start_odometer = get_optional_attr(record, "start_odometer")
-    end_work_odometer = get_optional_attr(record, "end_work_odometer")
-    end_home_odometer = get_optional_attr(record, "end_home_odometer")
+    start_odometer = record.start_odometer
+    end_work_odometer = record.end_work_odometer
+    end_home_odometer = record.end_home_odometer
 
-    work_start_time = get_optional_attr(record, "work_start_time")
-    uber_stop_time = get_optional_attr(record, "uber_stop_time")
-    home_end_time = get_optional_attr(record, "home_end_time")
+    work_start_time = record.work_start_time
+    uber_stop_time = record.uber_stop_time
+    home_end_time = record.home_end_time
 
     work_miles = None
     if start_odometer is not None and end_work_odometer is not None:
