@@ -1,13 +1,185 @@
+import re
 import sqlite3
 from pathlib import Path
 
 DATABASE_PATH = Path(__file__).parent / "uber_dashboard.db"
 
 
+def round_optional(value, decimals=2):
+    if value is None:
+        return None
+
+    return round(value, decimals)
+
+
+def get_optional_attr(record, field_name):
+    return getattr(record, field_name, None)
+
+
+def parse_12_hour_time_to_minutes(time_text):
+    """
+    Parses same-day 12-hour time strings like:
+    - "5:30 PM"
+    - "12:05 AM"
+    - "9 PM"
+
+    Returns minutes since midnight, or None if empty/invalid.
+    """
+    if time_text is None:
+        return None
+
+    cleaned_time = time_text.strip().upper()
+
+    if cleaned_time == "":
+        return None
+
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)", cleaned_time)
+
+    if match is None:
+        return None
+
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    meridiem = match.group(3)
+
+    if hour < 1 or hour > 12:
+        return None
+
+    if minute < 0 or minute > 59:
+        return None
+
+    if meridiem == "AM":
+        if hour == 12:
+            hour = 0
+    else:
+        if hour != 12:
+            hour += 12
+
+    return hour * 60 + minute
+
+
+def calculate_same_day_hours(start_time, end_time):
+    """
+    Calculates same-day duration between two 12-hour time strings.
+
+    Since this tracker is not intended for overnight Uber shifts, this returns
+    None if the end time is earlier than the start time.
+    """
+    start_minutes = parse_12_hour_time_to_minutes(start_time)
+    end_minutes = parse_12_hour_time_to_minutes(end_time)
+
+    if start_minutes is None or end_minutes is None:
+        return None
+
+    if end_minutes < start_minutes:
+        return None
+
+    return (end_minutes - start_minutes) / 60
+
+def validate_daily_record(record):
+    """
+    Backend validation for daily log inputs.
+    Frontend validation is helpful, but this is the real API gate.
+    """
+        
+    start_odometer = get_optional_attr(record, "start_odometer")
+    end_work_odometer = get_optional_attr(record, "end_work_odometer")
+    end_home_odometer = get_optional_attr(record, "end_home_odometer")
+
+    work_start_time = get_optional_attr(record, "work_start_time")
+    uber_stop_time = get_optional_attr(record, "uber_stop_time")
+    home_end_time = get_optional_attr(record, "home_end_time")
+
+    if record.online_hours <= 0:
+        raise ValueError("Online hours must be greater than 0.")
+
+    if record.trips <= 0:
+        raise ValueError("Trips must be greater than 0.")
+
+    if record.net_fare < 0 or record.tips < 0 or record.promotions < 0:
+        raise ValueError("Fare, tips, and promotions cannot be negative.")
+
+    if start_odometer is not None and start_odometer < 0:
+        raise ValueError("Start odometer cannot be negative.")
+
+    if end_work_odometer is not None and end_work_odometer < 0:
+        raise ValueError("End Uber/work odometer cannot be negative.")
+
+    if end_home_odometer is not None and end_home_odometer < 0:
+        raise ValueError("End home odometer cannot be negative.")
+
+    if end_work_odometer is not None and start_odometer is None:
+        raise ValueError("Start odometer is required when end Uber/work odometer is entered.")
+
+    if end_home_odometer is not None and start_odometer is None:
+        raise ValueError("Start odometer is required when end home odometer is entered.")
+
+    if end_home_odometer is not None and end_work_odometer is None:
+        raise ValueError("End Uber/work odometer is required when end home odometer is entered.")
+
+    if (
+        start_odometer is not None
+        and end_work_odometer is not None
+        and end_work_odometer < start_odometer
+    ):
+        raise ValueError("End Uber/work odometer cannot be lower than start odometer.")
+
+    if (
+        start_odometer is not None
+        and end_home_odometer is not None
+        and end_home_odometer < start_odometer
+    ):
+        raise ValueError("End home odometer cannot be lower than start odometer.")
+
+    if (
+        end_work_odometer is not None
+        and end_home_odometer is not None
+        and end_home_odometer < end_work_odometer
+    ):
+        raise ValueError("End home odometer cannot be lower than end Uber/work odometer.")
+
+    if uber_stop_time is not None and work_start_time is None:
+        raise ValueError("Work start time is required when Uber stop time is entered.")
+
+    if home_end_time is not None and (work_start_time is None or uber_stop_time is None):
+        raise ValueError("Work start time and Uber stop time are required when home/end time is entered.")
+
+    work_start_minutes = parse_12_hour_time_to_minutes(work_start_time)
+    uber_stop_minutes = parse_12_hour_time_to_minutes(uber_stop_time)
+    home_end_minutes = parse_12_hour_time_to_minutes(home_end_time)
+
+    if work_start_time is not None and work_start_minutes is None:
+        raise ValueError("Work start time must look like 5, 5:30, or 12:05 with AM/PM.")
+
+    if uber_stop_time is not None and uber_stop_minutes is None:
+        raise ValueError("Uber stop time must look like 5, 5:30, or 12:05 with AM/PM.")
+
+    if home_end_time is not None and home_end_minutes is None:
+        raise ValueError("Home/end time must look like 5, 5:30, or 12:05 with AM/PM.")
+
+    if (
+        work_start_minutes is not None
+        and uber_stop_minutes is not None
+        and uber_stop_minutes <= work_start_minutes
+    ):
+        raise ValueError("Uber stop time must be later than work start time.")
+
+    if (
+        uber_stop_minutes is not None
+        and home_end_minutes is not None
+        and home_end_minutes < uber_stop_minutes
+    ):
+        raise ValueError("Home/end time cannot be earlier than Uber stop time.")
+
+    wallet_balance = get_optional_attr(record, "wallet_balance")
+    if wallet_balance is not None and wallet_balance < 0:
+        raise ValueError("Wallet balance cannot be negative.")
+
 def get_connection():
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def get_hourly_label(avg_hourly: float):
     if avg_hourly >= 30:
@@ -50,6 +222,7 @@ def get_mileage_label(earnings_per_mile):
         return "Questionable mileage"
     return "Weak mileage"
 
+
 def calculate_daily_metrics(record):
     total_earnings = record.net_fare + record.tips + record.promotions
 
@@ -60,9 +233,63 @@ def calculate_daily_metrics(record):
     tip_share = record.tips / total_earnings if total_earnings > 0 else 0
     promo_share = record.promotions / total_earnings if total_earnings > 0 else 0
 
+    miles_driven = get_optional_attr(record, "miles_driven")
+
+    start_odometer = get_optional_attr(record, "start_odometer")
+    end_work_odometer = get_optional_attr(record, "end_work_odometer")
+    end_home_odometer = get_optional_attr(record, "end_home_odometer")
+
+    work_start_time = get_optional_attr(record, "work_start_time")
+    uber_stop_time = get_optional_attr(record, "uber_stop_time")
+    home_end_time = get_optional_attr(record, "home_end_time")
+
+    work_miles = None
+    if start_odometer is not None and end_work_odometer is not None:
+        if end_work_odometer >= start_odometer:
+            work_miles = end_work_odometer - start_odometer
+
+    total_outing_miles = None
+    if start_odometer is not None and end_home_odometer is not None:
+        if end_home_odometer >= start_odometer:
+            total_outing_miles = end_home_odometer - start_odometer
+
+    post_work_miles = None
+    if end_work_odometer is not None and end_home_odometer is not None:
+        if end_home_odometer >= end_work_odometer:
+            post_work_miles = end_home_odometer - end_work_odometer
+
+    miles_per_trip = None
+    if work_miles is not None and work_miles > 0 and record.trips > 0:
+        miles_per_trip = work_miles / record.trips
+
+    earnings_per_work_mile = None
+    if work_miles is not None and work_miles > 0:
+        earnings_per_work_mile = total_earnings / work_miles
+
+    earnings_per_total_mile = None
+    if total_outing_miles is not None and total_outing_miles > 0:
+        earnings_per_total_mile = total_earnings / total_outing_miles
+
+    # Legacy v2.0 $/mile.
+    # If odometer-based work miles exist, use that.
+    # Otherwise, fall back to manually-entered miles_driven.
     earnings_per_mile = None
-    if record.miles_driven is not None and record.miles_driven > 0:
-        earnings_per_mile = total_earnings / record.miles_driven
+    effective_miles_for_legacy_metric = work_miles if work_miles is not None else miles_driven
+
+    if effective_miles_for_legacy_metric is not None and effective_miles_for_legacy_metric > 0:
+        earnings_per_mile = total_earnings / effective_miles_for_legacy_metric
+
+    real_work_hours = calculate_same_day_hours(work_start_time, uber_stop_time)
+    full_outing_hours = calculate_same_day_hours(work_start_time, home_end_time)
+    post_work_hours = calculate_same_day_hours(uber_stop_time, home_end_time)
+
+    earnings_per_real_work_hour = None
+    if real_work_hours is not None and real_work_hours > 0:
+        earnings_per_real_work_hour = total_earnings / real_work_hours
+
+    earnings_per_full_outing_hour = None
+    if full_outing_hours is not None and full_outing_hours > 0:
+        earnings_per_full_outing_hour = total_earnings / full_outing_hours
 
     return {
         "total_earnings": round(total_earnings, 2),
@@ -71,7 +298,22 @@ def calculate_daily_metrics(record):
         "fare_share": round(fare_share, 4),
         "tip_share": round(tip_share, 4),
         "promo_share": round(promo_share, 4),
-        "earnings_per_mile": round(earnings_per_mile, 2) if earnings_per_mile is not None else None,
+
+        "earnings_per_mile": round_optional(earnings_per_mile),
+
+        "work_miles": round_optional(work_miles, 1),
+        "total_outing_miles": round_optional(total_outing_miles, 1),
+        "post_work_miles": round_optional(post_work_miles, 1),
+        "miles_per_trip": round_optional(miles_per_trip, 1),
+        "earnings_per_work_mile": round_optional(earnings_per_work_mile),
+        "earnings_per_total_mile": round_optional(earnings_per_total_mile),
+
+        "real_work_hours": round_optional(real_work_hours, 2),
+        "full_outing_hours": round_optional(full_outing_hours, 2),
+        "post_work_hours": round_optional(post_work_hours, 2),
+        "earnings_per_real_work_hour": round_optional(earnings_per_real_work_hour),
+        "earnings_per_full_outing_hour": round_optional(earnings_per_full_outing_hour),
+
         "hourly_label": get_hourly_label(avg_hourly),
         "promo_label": get_promo_label(promo_share),
         "tip_label": get_tip_label(tip_share),
@@ -93,18 +335,44 @@ def initialize_database():
             net_fare REAL NOT NULL,
             tips REAL NOT NULL,
             promotions REAL NOT NULL,
+
             total_earnings REAL NOT NULL,
             avg_hourly REAL NOT NULL,
             avg_per_trip REAL NOT NULL,
+
             miles_driven REAL,
             earnings_per_mile REAL,
+
+            start_odometer REAL,
+            end_work_odometer REAL,
+            end_home_odometer REAL,
+
+            work_miles REAL,
+            total_outing_miles REAL,
+            post_work_miles REAL,
+            miles_per_trip REAL,
+            earnings_per_work_mile REAL,
+            earnings_per_total_mile REAL,
+
+            work_start_time TEXT,
+            uber_stop_time TEXT,
+            home_end_time TEXT,
+
+            real_work_hours REAL,
+            full_outing_hours REAL,
+            post_work_hours REAL,
+            earnings_per_real_work_hour REAL,
+            earnings_per_full_outing_hour REAL,
+
             fare_share REAL NOT NULL,
             tip_share REAL NOT NULL,
             promo_share REAL NOT NULL,
+
             hourly_label TEXT NOT NULL,
             promo_label TEXT NOT NULL,
             tip_label TEXT NOT NULL,
             mileage_label TEXT NOT NULL,
+
             wallet_balance REAL,
             notes TEXT
         )
@@ -113,34 +381,45 @@ def initialize_database():
 
     sample_data = [
         {
-            "date": "2025-07-23",
-            "online_hours": 8.17,
-            "trips": 19,
-            "net_fare": 95.00,
-            "tips": 54.71,
-            "promotions": 20.00,
+            "date": "2026-06-22",
+            "online_hours": 4.32,
+            "trips": 10,
+            "net_fare": 55.13,
+            "tips": 47.32,
+            "promotions": 0,
             "miles_driven": None,
             "wallet_balance": None,
             "notes": "Seed data from previous test record.",
         },
         {
-            "date": "2025-07-24",
-            "online_hours": 8.82,
-            "trips": 22,
-            "net_fare": 110.00,
-            "tips": 49.55,
-            "promotions": 20.00,
+            "date": "2026-06-23",
+            "online_hours": 1.1,
+            "trips": 2,
+            "net_fare": 12.62,
+            "tips": 6.08,
+            "promotions": 0,
             "miles_driven": None,
             "wallet_balance": None,
             "notes": "Seed data from previous test record.",
         },
         {
-            "date": "2025-07-27",
-            "online_hours": 4.75,
-            "trips": 14,
-            "net_fare": 74.55,
-            "tips": 35.00,
-            "promotions": 15.00,
+            "date": "2026-06-24",
+            "online_hours": 4.45,
+            "trips": 11,
+            "net_fare": 65.43,
+            "tips": 43.10,
+            "promotions": 26,
+            "miles_driven": None,
+            "wallet_balance": None,
+            "notes": "Seed data from previous test record.",
+        },
+        {
+            "date": "2026-06-25",
+            "online_hours": 4.27,
+            "trips": 7,
+            "net_fare": 51.31,
+            "tips": 47.83,
+            "promotions": 16,
             "miles_driven": None,
             "wallet_balance": None,
             "notes": "Seed data from previous test record.",
@@ -156,10 +435,19 @@ def initialize_database():
                 self.net_fare = data["net_fare"]
                 self.tips = data["tips"]
                 self.promotions = data["promotions"]
+
                 self.miles_driven = data["miles_driven"]
+
+                self.start_odometer = None
+                self.end_work_odometer = None
+                self.end_home_odometer = None
+
+                self.work_start_time = None
+                self.uber_stop_time = None
+                self.home_end_time = None
+
                 self.wallet_balance = data["wallet_balance"]
                 self.notes = data["notes"]
-
 
         seed_record = SeedRecord(record)
         metrics = calculate_daily_metrics(seed_record)
@@ -177,19 +465,44 @@ def initialize_database():
                 total_earnings,
                 avg_hourly,
                 avg_per_trip,
+
                 miles_driven,
                 earnings_per_mile,
+
+                start_odometer,
+                end_work_odometer,
+                end_home_odometer,
+
+                work_miles,
+                total_outing_miles,
+                post_work_miles,
+                miles_per_trip,
+                earnings_per_work_mile,
+                earnings_per_total_mile,
+
+                work_start_time,
+                uber_stop_time,
+                home_end_time,
+
+                real_work_hours,
+                full_outing_hours,
+                post_work_hours,
+                earnings_per_real_work_hour,
+                earnings_per_full_outing_hour,
+
                 fare_share,
                 tip_share,
                 promo_share,
+
                 hourly_label,
                 promo_label,
                 tip_label,
                 mileage_label,
+
                 wallet_balance,
                 notes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["date"],
@@ -201,15 +514,40 @@ def initialize_database():
                 metrics["total_earnings"],
                 metrics["avg_hourly"],
                 metrics["avg_per_trip"],
+
                 record["miles_driven"],
                 metrics["earnings_per_mile"],
+
+                None,
+                None,
+                None,
+
+                metrics["work_miles"],
+                metrics["total_outing_miles"],
+                metrics["post_work_miles"],
+                metrics["miles_per_trip"],
+                metrics["earnings_per_work_mile"],
+                metrics["earnings_per_total_mile"],
+
+                None,
+                None,
+                None,
+
+                metrics["real_work_hours"],
+                metrics["full_outing_hours"],
+                metrics["post_work_hours"],
+                metrics["earnings_per_real_work_hour"],
+                metrics["earnings_per_full_outing_hour"],
+
                 metrics["fare_share"],
                 metrics["tip_share"],
                 metrics["promo_share"],
+
                 metrics["hourly_label"],
                 metrics["promo_label"],
                 metrics["tip_label"],
                 metrics["mileage_label"],
+
                 record["wallet_balance"],
                 record["notes"],
             ),
@@ -235,15 +573,40 @@ def get_daily_data():
             total_earnings,
             avg_hourly,
             avg_per_trip,
+
             miles_driven,
             earnings_per_mile,
+
+            start_odometer,
+            end_work_odometer,
+            end_home_odometer,
+
+            work_miles,
+            total_outing_miles,
+            post_work_miles,
+            miles_per_trip,
+            earnings_per_work_mile,
+            earnings_per_total_mile,
+
+            work_start_time,
+            uber_stop_time,
+            home_end_time,
+
+            real_work_hours,
+            full_outing_hours,
+            post_work_hours,
+            earnings_per_real_work_hour,
+            earnings_per_full_outing_hour,
+
             fare_share,
             tip_share,
             promo_share,
+
             hourly_label,
             promo_label,
             tip_label,
             mileage_label,
+
             wallet_balance,
             notes
         FROM daily_logs
@@ -291,6 +654,7 @@ def get_summary_data():
 
 
 def create_daily_record(record):
+    validate_daily_record(record)
     metrics = calculate_daily_metrics(record)
 
     conn = get_connection()
@@ -309,19 +673,44 @@ def create_daily_record(record):
             total_earnings,
             avg_hourly,
             avg_per_trip,
+
             miles_driven,
             earnings_per_mile,
+
+            start_odometer,
+            end_work_odometer,
+            end_home_odometer,
+
+            work_miles,
+            total_outing_miles,
+            post_work_miles,
+            miles_per_trip,
+            earnings_per_work_mile,
+            earnings_per_total_mile,
+
+            work_start_time,
+            uber_stop_time,
+            home_end_time,
+
+            real_work_hours,
+            full_outing_hours,
+            post_work_hours,
+            earnings_per_real_work_hour,
+            earnings_per_full_outing_hour,
+
             fare_share,
             tip_share,
             promo_share,
+
             hourly_label,
             promo_label,
             tip_label,
             mileage_label,
+
             wallet_balance,
             notes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record.date,
@@ -333,15 +722,40 @@ def create_daily_record(record):
             metrics["total_earnings"],
             metrics["avg_hourly"],
             metrics["avg_per_trip"],
+
             record.miles_driven,
             metrics["earnings_per_mile"],
+
+            record.start_odometer,
+            record.end_work_odometer,
+            record.end_home_odometer,
+
+            metrics["work_miles"],
+            metrics["total_outing_miles"],
+            metrics["post_work_miles"],
+            metrics["miles_per_trip"],
+            metrics["earnings_per_work_mile"],
+            metrics["earnings_per_total_mile"],
+
+            record.work_start_time,
+            record.uber_stop_time,
+            record.home_end_time,
+
+            metrics["real_work_hours"],
+            metrics["full_outing_hours"],
+            metrics["post_work_hours"],
+            metrics["earnings_per_real_work_hour"],
+            metrics["earnings_per_full_outing_hour"],
+
             metrics["fare_share"],
             metrics["tip_share"],
             metrics["promo_share"],
+
             metrics["hourly_label"],
             metrics["promo_label"],
             metrics["tip_label"],
             metrics["mileage_label"],
+
             record.wallet_balance,
             record.notes,
         ),
@@ -357,23 +771,51 @@ def create_daily_record(record):
         "net_fare": record.net_fare,
         "tips": record.tips,
         "promotions": record.promotions,
+
         "total_earnings": metrics["total_earnings"],
         "avg_hourly": metrics["avg_hourly"],
         "avg_per_trip": metrics["avg_per_trip"],
+
         "miles_driven": record.miles_driven,
         "earnings_per_mile": metrics["earnings_per_mile"],
+
+        "start_odometer": record.start_odometer,
+        "end_work_odometer": record.end_work_odometer,
+        "end_home_odometer": record.end_home_odometer,
+
+        "work_miles": metrics["work_miles"],
+        "total_outing_miles": metrics["total_outing_miles"],
+        "post_work_miles": metrics["post_work_miles"],
+        "miles_per_trip": metrics["miles_per_trip"],
+        "earnings_per_work_mile": metrics["earnings_per_work_mile"],
+        "earnings_per_total_mile": metrics["earnings_per_total_mile"],
+
+        "work_start_time": record.work_start_time,
+        "uber_stop_time": record.uber_stop_time,
+        "home_end_time": record.home_end_time,
+
+        "real_work_hours": metrics["real_work_hours"],
+        "full_outing_hours": metrics["full_outing_hours"],
+        "post_work_hours": metrics["post_work_hours"],
+        "earnings_per_real_work_hour": metrics["earnings_per_real_work_hour"],
+        "earnings_per_full_outing_hour": metrics["earnings_per_full_outing_hour"],
+
         "fare_share": metrics["fare_share"],
         "tip_share": metrics["tip_share"],
         "promo_share": metrics["promo_share"],
+
         "hourly_label": metrics["hourly_label"],
         "promo_label": metrics["promo_label"],
         "tip_label": metrics["tip_label"],
         "mileage_label": metrics["mileage_label"],
+
         "wallet_balance": record.wallet_balance,
         "notes": record.notes,
     }
 
-def update_daily_record(date: str, record):
+
+def update_daily_record(record):
+    validate_daily_record(record)
     metrics = calculate_daily_metrics(record)
 
     conn = get_connection()
@@ -391,15 +833,40 @@ def update_daily_record(date: str, record):
             total_earnings = ?,
             avg_hourly = ?,
             avg_per_trip = ?,
+
             miles_driven = ?,
             earnings_per_mile = ?,
+
+            start_odometer = ?,
+            end_work_odometer = ?,
+            end_home_odometer = ?,
+
+            work_miles = ?,
+            total_outing_miles = ?,
+            post_work_miles = ?,
+            miles_per_trip = ?,
+            earnings_per_work_mile = ?,
+            earnings_per_total_mile = ?,
+
+            work_start_time = ?,
+            uber_stop_time = ?,
+            home_end_time = ?,
+
+            real_work_hours = ?,
+            full_outing_hours = ?,
+            post_work_hours = ?,
+            earnings_per_real_work_hour = ?,
+            earnings_per_full_outing_hour = ?,
+
             fare_share = ?,
             tip_share = ?,
             promo_share = ?,
+
             hourly_label = ?,
             promo_label = ?,
             tip_label = ?,
             mileage_label = ?,
+
             wallet_balance = ?,
             notes = ?
         WHERE date = ?
@@ -413,15 +880,40 @@ def update_daily_record(date: str, record):
             metrics["total_earnings"],
             metrics["avg_hourly"],
             metrics["avg_per_trip"],
+
             record.miles_driven,
             metrics["earnings_per_mile"],
+
+            record.start_odometer,
+            record.end_work_odometer,
+            record.end_home_odometer,
+
+            metrics["work_miles"],
+            metrics["total_outing_miles"],
+            metrics["post_work_miles"],
+            metrics["miles_per_trip"],
+            metrics["earnings_per_work_mile"],
+            metrics["earnings_per_total_mile"],
+
+            record.work_start_time,
+            record.uber_stop_time,
+            record.home_end_time,
+
+            metrics["real_work_hours"],
+            metrics["full_outing_hours"],
+            metrics["post_work_hours"],
+            metrics["earnings_per_real_work_hour"],
+            metrics["earnings_per_full_outing_hour"],
+
             metrics["fare_share"],
             metrics["tip_share"],
             metrics["promo_share"],
+
             metrics["hourly_label"],
             metrics["promo_label"],
             metrics["tip_label"],
             metrics["mileage_label"],
+
             record.wallet_balance,
             record.notes,
             date,
@@ -443,21 +935,48 @@ def update_daily_record(date: str, record):
         "net_fare": record.net_fare,
         "tips": record.tips,
         "promotions": record.promotions,
+
         "total_earnings": metrics["total_earnings"],
         "avg_hourly": metrics["avg_hourly"],
         "avg_per_trip": metrics["avg_per_trip"],
+
         "miles_driven": record.miles_driven,
         "earnings_per_mile": metrics["earnings_per_mile"],
+
+        "start_odometer": record.start_odometer,
+        "end_work_odometer": record.end_work_odometer,
+        "end_home_odometer": record.end_home_odometer,
+
+        "work_miles": metrics["work_miles"],
+        "total_outing_miles": metrics["total_outing_miles"],
+        "post_work_miles": metrics["post_work_miles"],
+        "miles_per_trip": metrics["miles_per_trip"],
+        "earnings_per_work_mile": metrics["earnings_per_work_mile"],
+        "earnings_per_total_mile": metrics["earnings_per_total_mile"],
+
+        "work_start_time": record.work_start_time,
+        "uber_stop_time": record.uber_stop_time,
+        "home_end_time": record.home_end_time,
+
+        "real_work_hours": metrics["real_work_hours"],
+        "full_outing_hours": metrics["full_outing_hours"],
+        "post_work_hours": metrics["post_work_hours"],
+        "earnings_per_real_work_hour": metrics["earnings_per_real_work_hour"],
+        "earnings_per_full_outing_hour": metrics["earnings_per_full_outing_hour"],
+
         "fare_share": metrics["fare_share"],
         "tip_share": metrics["tip_share"],
         "promo_share": metrics["promo_share"],
+
         "hourly_label": metrics["hourly_label"],
         "promo_label": metrics["promo_label"],
         "tip_label": metrics["tip_label"],
         "mileage_label": metrics["mileage_label"],
+
         "wallet_balance": record.wallet_balance,
         "notes": record.notes,
     }
+
 
 def delete_daily_record(date: str):
     conn = get_connection()

@@ -16,7 +16,22 @@ class DailyRecordCreate(BaseModel):
     net_fare: float
     tips: float
     promotions: float
+
+    # Legacy/manual mileage field from v2.0.
+    # We keep this for now so the current frontend does not break.
     miles_driven: float | None = None
+
+    # v2.1 odometer tracking
+    start_odometer: float | None = None
+    end_work_odometer: float | None = None
+    end_home_odometer: float | None = None
+
+    # v2.1 time tracking
+    # Expected format for now: "5:30 PM", "9:45 PM", etc.
+    work_start_time: str | None = None
+    uber_stop_time: str | None = None
+    home_end_time: str | None = None
+
     wallet_balance: float | None = None
     notes: str | None = None
 
@@ -28,17 +43,48 @@ class DailyRecord(BaseModel):
     net_fare: float
     tips: float
     promotions: float
+
     total_earnings: float
     avg_hourly: float
     avg_per_trip: float
+
+    # Legacy/manual mileage field from v2.0
     miles_driven: float | None = None
     earnings_per_mile: float | None = None
+
+    # v2.1 raw odometer fields
+    start_odometer: float | None = None
+    end_work_odometer: float | None = None
+    end_home_odometer: float | None = None
+
+    # v2.1 calculated mileage fields
+    work_miles: float | None = None
+    total_outing_miles: float | None = None
+    post_work_miles: float | None = None
+    miles_per_trip: float | None = None
+    earnings_per_work_mile: float | None = None
+    earnings_per_total_mile: float | None = None
+
+    # v2.1 raw time fields
+    work_start_time: str | None = None
+    uber_stop_time: str | None = None
+    home_end_time: str | None = None
+
+    # v2.1 calculated time fields
+    real_work_hours: float | None = None
+    full_outing_hours: float | None = None
+    post_work_hours: float | None = None
+    earnings_per_real_work_hour: float | None = None
+    earnings_per_full_outing_hour: float | None = None
+
     fare_share: float
     tip_share: float
     promo_share: float
+
     hourly_label: str
     promo_label: str
     tip_label: str
     mileage_label: str
+
     wallet_balance: float | None = None
     notes: str | None = None

@@ -59,10 +59,21 @@ def create_daily(record: DailyRecordCreate):
             status_code=400,
             detail="A daily record with this date already exists."
         )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
 
 @app.put("/api/daily/{date}", response_model=DailyRecord)
 def update_daily(date: str, record: DailyRecordCreate):
-    updated_record = update_daily_record(date, record)
+    try:
+        updated_record = update_daily_record(date, record)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
 
     if updated_record is None:
         raise HTTPException(
