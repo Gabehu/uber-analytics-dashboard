@@ -1045,3 +1045,68 @@ def get_daily_csv():
         writer.writerow({key: row.get(key) for key in fieldnames})
 
     return buffer.getvalue()
+
+
+# ============================================================
+# Weekly series (v2.3 — week jump picker; extendable to v2.4)
+# ============================================================
+
+from datetime import date as _date, timedelta as _timedelta
+
+
+def _monday_of(d):
+    # Monday = 0 ... Sunday = 6
+    return d - _timedelta(days=d.weekday())
+
+
+def get_weekly_series():
+    """
+    Returns a continuous Monday-Sunday week series spanning from the earliest
+    logged week through the most recent, newest first. Empty weeks between
+    weeks with data are included (total 0.00) so a picker won't appear to skip
+    weeks when the data has gaps.
+
+    Each week carries a `daily` list of 7 entries (Mon..Sun) so this endpoint
+    can also feed a mini-chart-per-week view later without a schema change.
+    """
+    daily_rows = get_daily_data()
+    if not daily_rows:
+        return []
+
+    earnings_by_date = {}
+    for row in daily_rows:
+        earnings_by_date[row["date"]] = row.get("total_earnings", 0) or 0
+
+    parsed_dates = [_date.fromisoformat(row["date"]) for row in daily_rows]
+    first_monday = _monday_of(min(parsed_dates))
+    last_monday = _monday_of(max(parsed_dates))
+
+    weeks = []
+    current_monday = first_monday
+    while current_monday <= last_monday:
+        week_end = current_monday + _timedelta(days=6)
+
+        daily = []
+        week_total = 0.0
+        for offset in range(7):
+            day = current_monday + _timedelta(days=offset)
+            day_key = day.isoformat()
+            day_earnings = earnings_by_date.get(day_key, 0)
+            week_total += day_earnings
+            daily.append({
+                "date": day_key,
+                "earnings": round(day_earnings, 2),
+                "has_record": day_key in earnings_by_date,
+            })
+
+        weeks.append({
+            "week_start": current_monday.isoformat(),
+            "week_end": week_end.isoformat(),
+            "total_earnings": round(week_total, 2),
+            "daily": daily,
+        })
+
+        current_monday += _timedelta(days=7)
+
+    weeks.reverse()
+    return weeks

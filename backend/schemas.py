@@ -9,6 +9,19 @@ class Summary(BaseModel):
     avg_per_trip: float
 
 
+class WeekDay(BaseModel):
+    date: str
+    earnings: float
+    has_record: bool
+
+
+class WeekSummary(BaseModel):
+    week_start: str
+    week_end: str
+    total_earnings: float
+    daily: list[WeekDay]
+
+
 class DailyRecordCreate(BaseModel):
     date: str
     online_hours: float
@@ -17,17 +30,12 @@ class DailyRecordCreate(BaseModel):
     tips: float
     promotions: float
 
-    # Legacy/manual mileage field from v2.0.
-    # We keep this for now so the current frontend does not break.
     miles_driven: float | None = None
 
-    # v2.1 odometer tracking
     start_odometer: float | None = None
     end_work_odometer: float | None = None
     end_home_odometer: float | None = None
 
-    # v2.1 time tracking
-    # Expected format for now: "5:30 PM", "9:45 PM", etc.
     work_start_time: str | None = None
     uber_stop_time: str | None = None
     home_end_time: str | None = None
@@ -48,16 +56,13 @@ class DailyRecord(BaseModel):
     avg_hourly: float
     avg_per_trip: float
 
-    # Legacy/manual mileage field from v2.0
     miles_driven: float | None = None
     earnings_per_mile: float | None = None
 
-    # v2.1 raw odometer fields
     start_odometer: float | None = None
     end_work_odometer: float | None = None
     end_home_odometer: float | None = None
 
-    # v2.1 calculated mileage fields
     work_miles: float | None = None
     total_outing_miles: float | None = None
     post_work_miles: float | None = None
@@ -65,12 +70,10 @@ class DailyRecord(BaseModel):
     earnings_per_work_mile: float | None = None
     earnings_per_total_mile: float | None = None
 
-    # v2.1 raw time fields
     work_start_time: str | None = None
     uber_stop_time: str | None = None
     home_end_time: str | None = None
 
-    # v2.1 calculated time fields
     real_work_hours: float | None = None
     full_outing_hours: float | None = None
     post_work_hours: float | None = None

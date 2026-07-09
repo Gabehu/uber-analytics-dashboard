@@ -65,6 +65,7 @@ function getLabelVariant(label) {
 function App() {
   const [summary, setSummary] = useState(null);
   const [dailyRecords, setDailyRecords] = useState([]);
+  const [weeks, setWeeks] = useState([]);
   const latestRecord = dailyRecords.length > 0 ? dailyRecords[0] : null;
 
   const [selectedRecordDate, setSelectedRecordDate] = useState(null);
@@ -74,6 +75,7 @@ function App() {
   const [selectedWeekStart, setSelectedWeekStart] = useState(null);
   const [formData, setFormData] = useState(emptyForm);
   const [showAdvancedTracking, setShowAdvancedTracking] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingDate, setEditingDate] = useState(null);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -274,6 +276,35 @@ function App() {
     setSelectedWeekStart(formatDateForInput(latestWeekStart));
   }
 
+  function jumpToDate(dateString) {
+    if (!dateString) {
+      return;
+    }
+
+    // Clear any selected day so the view returns to the weekly summary
+    // for the chosen week rather than staying pinned to a single day.
+    setSelectedRecordDate(null);
+
+    const weekStart = getWeekStart(dateString);
+    setSelectedWeekStart(formatDateForInput(weekStart));
+  }
+
+  function jumpToWeekStart(weekStartString) {
+    if (!weekStartString) {
+      return;
+    }
+
+    setSelectedRecordDate(null);
+    setSelectedWeekStart(weekStartString);
+  }
+
+  function formatWeekRangeLabel(weekStartString, weekEndString) {
+    const start = new Date(`${weekStartString}T00:00:00`);
+    const end = new Date(`${weekEndString}T00:00:00`);
+
+    return `${formatShortDate(start)} - ${formatShortDate(end)}`;
+  }
+
   function selectRecordAndWeek(date) {
     setSelectedRecordDate(date);
 
@@ -404,16 +435,19 @@ function App() {
 
       const summaryResponse = await fetch(`${API_BASE_URL}/api/summary`);
       const dailyResponse = await fetch(`${API_BASE_URL}/api/daily`);
+      const weeksResponse = await fetch(`${API_BASE_URL}/api/weeks`);
 
-      if (!summaryResponse.ok || !dailyResponse.ok) {
+      if (!summaryResponse.ok || !dailyResponse.ok || !weeksResponse.ok) {
         throw new Error("Failed to fetch dashboard data.");
       }
 
       const summaryData = await summaryResponse.json();
       const dailyData = await dailyResponse.json();
+      const weeksData = await weeksResponse.json();
 
       setSummary(summaryData);
       setDailyRecords(dailyData);
+      setWeeks(weeksData);
     } catch (err) {
       setError(err.message);
     }
@@ -458,6 +492,7 @@ function App() {
     const homeEndTime = splitStoredTime(record.home_end_time);
 
     setEditingDate(record.date);
+    setIsFormOpen(true);
     selectRecordAndWeek(record.date);
 
     setFormData({
@@ -500,6 +535,7 @@ function App() {
 
   function cancelEdit() {
     setEditingDate(null);
+    setIsFormOpen(false);
     setFormData(emptyForm);
     setShowAdvancedTracking(false);
     setError("");
@@ -724,6 +760,7 @@ function App() {
 
       setFormData(emptyForm);
       setShowAdvancedTracking(false);
+      setIsFormOpen(false);
       setSelectedRecordDate(savedRecord.date);
 
       const savedRecordWeekStart = getWeekStart(savedRecord.date);
@@ -829,31 +866,62 @@ function App() {
         <section className="chart-section">
           <div className="weekly-chart-top">
             <div>
-              <p className="eyebrow">
-                {selectedRecordIsInVisibleWeek ? "Selected day" : "Weekly earnings"}
-              </p>
+              <div className="week-nav-group">
+                <p className="eyebrow">
+                  {selectedRecordIsInVisibleWeek ? "Selected day" : "Weekly earnings"}
+                </p>
 
-              <div className="week-nav">
-                <button type="button" onClick={() => changeWeek(-7)}>
-                  ←
-                </button>
+                <div className="week-nav">
+                  <button type="button" onClick={() => changeWeek(-7)}>
+                    ←
+                  </button>
 
-                <h2>
-                  {selectedRecordIsInVisibleWeek
-                    ? formatRecordDate(selectedRecord.date)
-                    : weekStartDate && weekEndDate
-                      ? `${formatShortDate(weekStartDate)} - ${formatShortDate(weekEndDate)}`
-                      : "Current week"}
-                </h2>
+                  <h2>
+                    {selectedRecordIsInVisibleWeek
+                      ? formatRecordDate(selectedRecord.date)
+                      : weekStartDate && weekEndDate
+                        ? `${formatShortDate(weekStartDate)} - ${formatShortDate(weekEndDate)}`
+                        : "Current week"}
+                  </h2>
 
-                <button type="button" onClick={() => changeWeek(7)}>
-                  →
-                </button>
+                  <button type="button" onClick={() => changeWeek(7)}>
+                    →
+                  </button>
+                </div>
               </div>
 
-              <button type="button" className="latest-week-button" onClick={goToLatestWeek}>
-                Latest week
-              </button>
+              <div className="week-jump-controls">
+                <button type="button" className="latest-week-button" onClick={goToLatestWeek}>
+                  Latest week
+                </button>
+
+                <input
+                  type="date"
+                  className="week-jump-date"
+                  aria-label="Jump to week containing date"
+                  value={selectedWeekStart || ""}
+                  onChange={(event) => jumpToDate(event.target.value)}
+                />
+
+                {weeks.length > 0 && (
+                  <select
+                    className="week-jump-select"
+                    aria-label="Jump to a recent week"
+                    value={selectedWeekStart || ""}
+                    onChange={(event) => jumpToWeekStart(event.target.value)}
+                  >
+                    <option value="" disabled>
+                      Jump to week…
+                    </option>
+                    {weeks.map((week) => (
+                      <option key={week.week_start} value={week.week_start}>
+                        {formatWeekRangeLabel(week.week_start, week.week_end)} · $
+                        {week.total_earnings.toFixed(2)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
             </div>
 
             <div className="weekly-total">
@@ -1077,8 +1145,58 @@ function App() {
         </section>
       )}
 
+
+      <section className="table-section">
+        <div className="table-section-header">
+          <h2>Daily logs</h2>
+
+          <div className="table-header-actions">
+            {!isFormOpen && !editingDate && (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setIsFormOpen(true);
+                  setError("");
+                  setSuccessMessage("");
+                }}
+              >
+                + Add daily log
+              </button>
+            )}
+
+            {isFormOpen && !editingDate && (
+              <button
+                type="button"
+                className="cancel-edit-button"
+                onClick={() => {
+                  setIsFormOpen(false);
+                  setFormData(emptyForm);
+                  setShowAdvancedTracking(false);
+                  setError("");
+                  setSuccessMessage("");
+                }}
+              >
+                Cancel
+              </button>
+            )}
+
+            {dailyRecords.length > 0 && (
+              <a
+                className="export-csv-button"
+                href={`${API_BASE_URL}/api/daily/csv`}
+              >
+                Export CSV
+              </a>
+            )}
+          </div>
+        </div>
+
+      {(isFormOpen || editingDate) && (
       <section className="form-section">
-        <h2>{editingDate ? `Edit daily log: ${editingDate}` : "Add daily log"}</h2>
+        <div className="form-section-header">
+          <h2>{editingDate ? `Edit daily log: ${editingDate}` : "Add daily log"}</h2>
+        </div>
 
         <form onSubmit={handleSubmit} className="entry-form">
           <label>
@@ -1174,7 +1292,7 @@ function App() {
               name="notes"
               value={formData.notes}
               onChange={handleInputChange}
-              rows="3"
+              rows="2"
             />
           </label>
 
@@ -1315,20 +1433,7 @@ function App() {
           )}
         </form>
       </section>
-
-      <section className="table-section">
-        <div className="table-section-header">
-          <h2>Daily logs</h2>
-
-          {dailyRecords.length > 0 && (
-            <a
-              className="export-csv-button"
-              href={`${API_BASE_URL}/api/daily/csv`}
-            >
-              Export CSV
-            </a>
-          )}
-        </div>
+      )}
 
         <table>
           <thead>
