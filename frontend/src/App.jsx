@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const API_BASE_URL = "http://127.0.0.1:8000";
@@ -81,6 +81,8 @@ function App() {
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const formSectionRef = useRef(null);
+
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
     const day = date.getDay();
@@ -126,6 +128,28 @@ function App() {
 
   function formatPercent(value) {
     return `${(value * 100).toFixed(1)}%`;
+  }
+
+  function buildEarningsDonutGradient(fareShare, tipShare, promoShare) {
+    const total = fareShare + tipShare + promoShare;
+
+    if (total <= 0) {
+      // No earnings to show a composition for — flat neutral ring.
+      return "var(--bg-surface-2)";
+    }
+
+    const farePercent = (fareShare / total) * 100;
+    const tipPercent = (tipShare / total) * 100;
+
+    const fareEnd = farePercent;
+    const tipEnd = farePercent + tipPercent;
+
+    return (
+      `conic-gradient(` +
+      `var(--donut-fare) 0% ${fareEnd}%, ` +
+      `var(--donut-tip) ${fareEnd}% ${tipEnd}%, ` +
+      `var(--donut-promo) ${tipEnd}% 100%)`
+    );
   }
 
   function optionalNumber(value) {
@@ -497,6 +521,12 @@ function App() {
     return () => clearTimeout(timerId);
   }, [error, successMessage]);
 
+  useEffect(() => {
+    if (editingDate && formSectionRef.current) {
+      formSectionRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [editingDate]);
+
   function handleInputChange(event) {
     const { name, value } = event.target;
 
@@ -841,7 +871,7 @@ function App() {
   return (
     <main className="app">
       <section className="hero">
-        <p className="eyebrow">Uber Dashboard v2.1</p>
+        <p className="eyebrow">Uber Dashboard 2.5</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -973,7 +1003,7 @@ function App() {
           </div>
 
           <div className="weekly-bars">
-            {weeklyChartData.map((day) => {
+            {weeklyChartData.map((day, index) => {
               const barHeight =
                 maxWeeklyEarnings > 0
                   ? (day.earnings / maxWeeklyEarnings) * 100
@@ -985,7 +1015,7 @@ function App() {
                   className={`weekly-bar-item ${
                     selectedRecord?.date === day.date ? "selected-weekly-bar" : ""
                   } ${day.hasRecord ? "clickable-weekly-bar" : ""}`}
-                  key={day.date}
+                  key={index}
                   onClick={() => handleWeeklyBarClick(day)}
                   disabled={!day.hasRecord}
                 >
@@ -1059,109 +1089,145 @@ function App() {
             </div>
           </div>
 
-          <div className="weekly-breakdown-stats">
-            <div>
-              <p>Net fare</p>
-              <strong>
-                $
-                {selectedRecordIsInVisibleWeek
-                  ? selectedRecord.net_fare.toFixed(2)
-                  : weeklyNetFare.toFixed(2)}
-              </strong>
-              <span>
-                {selectedRecordIsInVisibleWeek
-                  ? formatPercent(selectedRecord.fare_share)
-                  : formatPercent(weeklyFareShare)}
-              </span>
+          <div className="earnings-composition-row">
+            <div className="earnings-donut-block">
+              <div
+                className="earnings-donut"
+                style={{
+                  background: buildEarningsDonutGradient(
+                    selectedRecordIsInVisibleWeek ? selectedRecord.fare_share : weeklyFareShare,
+                    selectedRecordIsInVisibleWeek ? selectedRecord.tip_share : weeklyTipShare,
+                    selectedRecordIsInVisibleWeek ? selectedRecord.promo_share : weeklyPromoShare
+                  ),
+                }}
+              >
+                <div className="earnings-donut-center">
+                  <span className="earnings-donut-center-value">
+                    $
+                    {selectedRecordIsInVisibleWeek
+                      ? selectedRecord.total_earnings.toFixed(2)
+                      : weeklyTotalEarnings.toFixed(2)}
+                  </span>
+                  <span className="earnings-donut-center-label">Total</span>
+                </div>
+              </div>
+
+              <ul className="earnings-donut-legend">
+                <li>
+                  <span className="legend-swatch">
+                    <span className="legend-dot legend-dot-fare"></span>
+                    <span className="legend-label">Net fare</span>
+                  </span>
+                  <strong>
+                    $
+                    {selectedRecordIsInVisibleWeek
+                      ? selectedRecord.net_fare.toFixed(2)
+                      : weeklyNetFare.toFixed(2)}
+                  </strong>
+                  <span className="legend-percent legend-percent-fare">
+                    {selectedRecordIsInVisibleWeek
+                      ? formatPercent(selectedRecord.fare_share)
+                      : formatPercent(weeklyFareShare)}
+                  </span>
+                </li>
+
+                <li>
+                  <span className="legend-swatch">
+                    <span className="legend-dot legend-dot-tip"></span>
+                    <span className="legend-label">Tips</span>
+                  </span>
+                  <strong>
+                    $
+                    {selectedRecordIsInVisibleWeek
+                      ? selectedRecord.tips.toFixed(2)
+                      : weeklyTips.toFixed(2)}
+                  </strong>
+                  <span className="legend-percent legend-percent-tip">
+                    {selectedRecordIsInVisibleWeek
+                      ? formatPercent(selectedRecord.tip_share)
+                      : formatPercent(weeklyTipShare)}
+                  </span>
+                </li>
+
+                <li>
+                  <span className="legend-swatch">
+                    <span className="legend-dot legend-dot-promo"></span>
+                    <span className="legend-label">Promotions</span>
+                  </span>
+                  <strong>
+                    $
+                    {selectedRecordIsInVisibleWeek
+                      ? selectedRecord.promotions.toFixed(2)
+                      : weeklyPromotions.toFixed(2)}
+                  </strong>
+                  <span className="legend-percent legend-percent-promo">
+                    {selectedRecordIsInVisibleWeek
+                      ? formatPercent(selectedRecord.promo_share)
+                      : formatPercent(weeklyPromoShare)}
+                  </span>
+                </li>
+              </ul>
             </div>
 
-            <div>
-              <p>Tips</p>
-              <strong>
-                $
-                {selectedRecordIsInVisibleWeek
-                  ? selectedRecord.tips.toFixed(2)
-                  : weeklyTips.toFixed(2)}
-              </strong>
-              <span>
-                {selectedRecordIsInVisibleWeek
-                  ? formatPercent(selectedRecord.tip_share)
-                  : formatPercent(weeklyTipShare)}
-              </span>
-            </div>
+            <div className="weekly-breakdown-stats weekly-breakdown-stats-compact">
+              <div>
+                <p>Work miles</p>
+                <strong>
+                  {selectedRecordIsInVisibleWeek
+                    ? formatOptionalNumber(selectedRecord.work_miles)
+                    : weeklyWorkMiles > 0
+                      ? weeklyWorkMiles.toFixed(1)
+                      : "—"}
+                </strong>
+              </div>
 
-            <div>
-              <p>Promotions</p>
-              <strong>
-                $
-                {selectedRecordIsInVisibleWeek
-                  ? selectedRecord.promotions.toFixed(2)
-                  : weeklyPromotions.toFixed(2)}
-              </strong>
-              <span>
-                {selectedRecordIsInVisibleWeek
-                  ? formatPercent(selectedRecord.promo_share)
-                  : formatPercent(weeklyPromoShare)}
-              </span>
-            </div>
+              <div>
+                <p>$/work mile</p>
+                <strong>
+                  {selectedRecordIsInVisibleWeek
+                    ? formatOptionalCurrency(selectedRecord.earnings_per_work_mile)
+                    : formatOptionalCurrency(weeklyEarningsPerWorkMile)}
+                </strong>
+              </div>
 
-            <div>
-              <p>Work miles</p>
-              <strong>
-                {selectedRecordIsInVisibleWeek
-                  ? formatOptionalNumber(selectedRecord.work_miles)
-                  : weeklyWorkMiles > 0
-                    ? weeklyWorkMiles.toFixed(1)
-                    : "—"}
-              </strong>
-            </div>
+              <div>
+                <p>Miles/trip</p>
+                <strong>
+                  {selectedRecordIsInVisibleWeek
+                    ? formatOptionalNumber(selectedRecord.miles_per_trip)
+                    : weeklyTotalTrips > 0 && weeklyWorkMiles > 0
+                      ? (weeklyWorkMiles / weeklyTotalTrips).toFixed(1)
+                      : "—"}
+                </strong>
+              </div>
 
-            <div>
-              <p>$/work mile</p>
-              <strong>
-                {selectedRecordIsInVisibleWeek
-                  ? formatOptionalCurrency(selectedRecord.earnings_per_work_mile)
-                  : formatOptionalCurrency(weeklyEarningsPerWorkMile)}
-              </strong>
-            </div>
-
-            <div>
-              <p>Miles/trip</p>
-              <strong>
-                {selectedRecordIsInVisibleWeek
-                  ? formatOptionalNumber(selectedRecord.miles_per_trip)
-                  : weeklyTotalTrips > 0 && weeklyWorkMiles > 0
-                    ? (weeklyWorkMiles / weeklyTotalTrips).toFixed(1)
-                    : "—"}
-              </strong>
-            </div>
-
-            <div>
-              <p>Wallet Δ</p>
-              <strong className="wallet-delta-text">
-                {selectedRecordIsInVisibleWeek
-                  ? (selectedRecord.wallet_delta !== null
-                      ? `${selectedRecord.wallet_delta >= 0 ? "+" : "−"}$${Math.abs(selectedRecord.wallet_delta).toFixed(2)}`
-                      : "—")
-                  : (currentWeekData && currentWeekData.wallet_delta !== null
-                      ? `${currentWeekData.wallet_delta >= 0 ? "+" : "−"}$${Math.abs(currentWeekData.wallet_delta).toFixed(2)}`
-                      : "—")}
-              </strong>
-              <span className="wallet-delta-subtext">
-                {selectedRecordIsInVisibleWeek
-                  ? (selectedRecord.wallet_delta !== null
-                      ? (selectedRecord.wallet_delta_days_ago === 0
-                          ? "same day logged"
-                          : selectedRecord.wallet_delta_days_ago === 1
-                            ? "vs 1 day ago"
-                            : `vs ${selectedRecord.wallet_delta_days_ago} days ago`)
-                      : "")
-                  : (currentWeekData && currentWeekData.wallet_delta !== null
-                      ? `${formatShortDate(new Date(`${currentWeekData.wallet_delta_start_date}T00:00:00`))} → ${formatShortDate(new Date(`${currentWeekData.wallet_delta_end_date}T00:00:00`))}`
+              <div>
+                <p>Wallet Δ</p>
+                <strong className="wallet-delta-text">
+                  {selectedRecordIsInVisibleWeek
+                    ? (selectedRecord.wallet_delta !== null
+                        ? `${selectedRecord.wallet_delta >= 0 ? "+" : "−"}$${Math.abs(selectedRecord.wallet_delta).toFixed(2)}`
+                        : "—")
+                    : (currentWeekData && currentWeekData.wallet_delta !== null
+                        ? `${currentWeekData.wallet_delta >= 0 ? "+" : "−"}$${Math.abs(currentWeekData.wallet_delta).toFixed(2)}`
+                        : "—")}
+                </strong>
+                <span className="wallet-delta-subtext">
+                  {selectedRecordIsInVisibleWeek
+                    ? (selectedRecord.wallet_delta !== null
+                        ? (selectedRecord.wallet_delta_days_ago === 0
+                            ? "same day logged"
+                            : selectedRecord.wallet_delta_days_ago === 1
+                              ? "vs 1 day ago"
+                              : `vs ${selectedRecord.wallet_delta_days_ago} days ago`)
+                        : "")
+                    : (currentWeekData && currentWeekData.wallet_delta !== null
+                        ? `${formatShortDate(new Date(`${currentWeekData.wallet_delta_start_date}T00:00:00`))} → ${formatShortDate(new Date(`${currentWeekData.wallet_delta_end_date}T00:00:00`))}`
                       : "")}
               </span>
             </div>
           </div>
+        </div>
 
           {selectedRecordIsInVisibleWeek && (
             <div className="selected-day-extra">
@@ -1234,22 +1300,6 @@ function App() {
               </button>
             )}
 
-            {isFormOpen && !editingDate && (
-              <button
-                type="button"
-                className="cancel-edit-button"
-                onClick={() => {
-                  setIsFormOpen(false);
-                  setFormData(emptyForm);
-                  setShowAdvancedTracking(false);
-                  setError("");
-                  setSuccessMessage("");
-                }}
-              >
-                Cancel
-              </button>
-            )}
-
             {dailyRecords.length > 0 && (
               <a
                 className="export-csv-button"
@@ -1262,7 +1312,7 @@ function App() {
         </div>
 
       {(isFormOpen || editingDate) && (
-      <section className="form-section">
+      <section className="form-section" ref={formSectionRef}>
         <div className="form-section-header">
           <h2>{editingDate ? `Edit daily log: ${editingDate}` : "Add daily log"}</h2>
         </div>
@@ -1491,15 +1541,15 @@ function App() {
             </div>
           )}
 
-          <button type="submit" className="primary-button" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : editingDate ? "Update log" : "Add log"}
-          </button>
-
-          {editingDate && (
-            <button type="button" className="cancel-edit-button" onClick={cancelEdit}>
-              Cancel edit
+          <div className="form-actions">
+            <button type="submit" className="primary-button" disabled={isSubmitting}>
+              {isSubmitting ? "Saving..." : editingDate ? "Update log" : "Add log"}
             </button>
-          )}
+
+            <button type="button" className="cancel-edit-button" onClick={cancelEdit}>
+              Cancel
+            </button>
+          </div>
         </form>
       </section>
       )}
@@ -1564,6 +1614,7 @@ function App() {
                             setSelectedRecordDate(null);
                           } else {
                             selectRecordAndWeek(record.date);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
                           }
                         }}
                       >

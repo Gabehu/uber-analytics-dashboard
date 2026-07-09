@@ -28,6 +28,13 @@
   --danger-text: #f28b8b;
   --danger-fill: #e05a5a;
 
+  /* Categorical colors for the earnings composition donut — these encode
+     "which category," not "good vs bad," so they're intentionally separate
+     from the success/warning/danger tokens used for rule-label sentiment. */
+  --donut-fare: #4a90e2;
+  --donut-tip: #3ba776;
+  --donut-promo: #e6a03c;
+
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -232,17 +239,6 @@ button:disabled {
   transform: scale(0.98);
 }
 
-/* Header Cancel — red, signalling "discard this form" */
-.table-header-actions .cancel-edit-button {
-  background: var(--danger-bg);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: var(--danger-text);
-}
-
-.table-header-actions .cancel-edit-button:hover {
-  background: rgba(239, 68, 68, 0.22);
-}
-
 /* --- Row actions: View / Edit / Delete share one size --- */
 .table-actions button {
   height: 34px;
@@ -284,15 +280,29 @@ button:disabled {
   background: rgba(239, 68, 68, 0.22);
 }
 
+/* Cancel — red, signalling "discard this form" */
 .cancel-edit-button {
-  background: transparent;
-  color: var(--text-secondary);
+  background: var(--danger-bg);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--danger-text);
 }
 
+.cancel-edit-button:hover {
+  background: rgba(239, 68, 68, 0.22);
+}
+
+/* Advanced tracking toggle — amber-tinted so it doesn't read as a bland
+   neutral button, distinct from the blue submit and red cancel. */
 .advanced-toggle-button {
   min-height: 44px;
-  color: var(--text-secondary);
-  font-weight: 500;
+  background: var(--warning-bg);
+  border-color: rgba(230, 160, 60, 0.35);
+  color: var(--warning-text);
+  font-weight: 600;
+}
+
+.advanced-toggle-button:hover {
+  background: rgba(230, 160, 60, 0.24);
 }
 
 /* Form */
@@ -329,6 +339,17 @@ button:disabled {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 16px;
   align-items: end;
+}
+
+.form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.form-actions button {
+  min-width: 160px;
 }
 
 .entry-form label {
@@ -601,6 +622,7 @@ button:disabled {
   background: var(--success-fill);
   min-height: 4px;
   border-radius: 6px 6px 0 0;
+  transition: height 0.35s ease, background-color 0.2s ease;
 }
 
 .weekly-bar-fill.empty-bar {
@@ -682,6 +704,155 @@ button:disabled {
 .weekly-breakdown-stats .wallet-delta-subtext {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* --- Earnings composition: donut chart + legend, replacing the old
+   Net fare/Tips/Promotions cards. These are categorical colors (which
+   category the money came from), not sentiment colors (good/bad), so they
+   deliberately don't reuse the success/warning/danger meaning elsewhere. */
+
+.earnings-composition-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  align-items: center;
+}
+
+.earnings-donut-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 1 260px;
+}
+
+.earnings-donut {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  min-width: 96px;
+  border-radius: 50%;
+  transition: background 0.2s ease;
+}
+
+.earnings-donut-center {
+  position: absolute;
+  inset: 12px;
+  background: var(--bg-surface-1);
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.earnings-donut-center-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.earnings-donut-center-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.earnings-donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 160px;
+}
+
+.earnings-donut-legend li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+}
+
+.legend-swatch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-dot-fare {
+  background: var(--donut-fare);
+}
+
+.legend-dot-tip {
+  background: var(--donut-tip);
+}
+
+.legend-dot-promo {
+  background: var(--donut-promo);
+}
+
+.legend-label {
+  color: var(--text-secondary);
+}
+
+.earnings-donut-legend strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.legend-percent {
+  font-size: 12px;
+  min-width: 42px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.legend-percent-fare {
+  color: var(--donut-fare);
+}
+
+.legend-percent-tip {
+  color: var(--donut-tip);
+}
+
+.legend-percent-promo {
+  color: var(--donut-promo);
+}
+
+.weekly-breakdown-stats-compact {
+  flex: 1 1 320px;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+@media (max-width: 700px) {
+  .earnings-composition-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .earnings-donut-block {
+    flex: 1 1 auto;
+  }
 }
 
 .week-nav {
