@@ -27,6 +27,31 @@ class WeekSummary(BaseModel):
     wallet_delta_end_date: str | None = None
 
 
+class ImportRequest(BaseModel):
+    csv_text: str
+
+
+class ImportError(BaseModel):
+    row: int
+    date: str | None = None
+    message: str
+
+
+class ImportPreviewResult(BaseModel):
+    total_rows: int
+    new_count: int
+    update_count: int
+    error_count: int
+    errors: list[ImportError]
+
+
+class ImportCommitResult(BaseModel):
+    inserted: int
+    updated: int
+    error_count: int
+    errors: list[ImportError]
+
+
 class DailyRecordCreate(BaseModel):
     date: str
     online_hours: float

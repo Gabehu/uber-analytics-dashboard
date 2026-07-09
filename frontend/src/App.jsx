@@ -82,6 +82,11 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const formSectionRef = useRef(null);
+  const importFileInputRef = useRef(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importCsvText, setImportCsvText] = useState(null);
+  const [importResult, setImportResult] = useState(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
@@ -509,17 +514,18 @@ function App() {
   }, [latestRecord, selectedWeekStart]);
 
   useEffect(() => {
-    if (!error && !successMessage) {
+    if (!error && !successMessage && !importResult) {
       return;
     }
 
     const timerId = setTimeout(() => {
       setError("");
       setSuccessMessage("");
+      setImportResult(null);
     }, 3000);
 
     return () => clearTimeout(timerId);
-  }, [error, successMessage]);
+  }, [error, successMessage, importResult]);
 
   useEffect(() => {
     if (editingDate && formSectionRef.current) {
@@ -868,18 +874,96 @@ function App() {
     }
   }
 
+  function handleImportButtonClick() {
+    importFileInputRef.current?.click();
+  }
+
+  async function handleImportFileSelected(event) {
+    const file = event.target.files && event.target.files[0];
+
+    // Reset the input value so selecting the same file again still fires
+    // this handler (browsers won't re-fire onChange for an unchanged value).
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setError("");
+    setSuccessMessage("");
+    setImportResult(null);
+    setIsImporting(true);
+
+    try {
+      const csvText = await file.text();
+
+      const response = await fetch(`${API_BASE_URL}/api/daily/import/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv_text: csvText }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to read that CSV file.");
+      }
+
+      const preview = await response.json();
+      setImportCsvText(csvText);
+      setImportPreview(preview);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  function handleCancelImport() {
+    setImportPreview(null);
+    setImportCsvText(null);
+  }
+
+  async function handleConfirmImport() {
+    if (!importCsvText) {
+      return;
+    }
+
+    setIsImporting(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/daily/import/commit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv_text: importCsvText }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Import failed.");
+      }
+
+      const result = await response.json();
+      setImportResult(result);
+      setImportPreview(null);
+      setImportCsvText(null);
+      await fetchDashboardData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
   return (
     <main className="app">
       <section className="hero">
-        <p className="eyebrow">Uber Dashboard 2.5</p>
+        <p className="eyebrow">Uber Dashboard v2.1</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
         </p>
       </section>
-
-      {error && <p className="error">Error: {error}</p>}
-      {successMessage && <p className="success">{successMessage}</p>}
 
       {summary ? (
         <section className="summary-grid">
@@ -1300,6 +1384,23 @@ function App() {
               </button>
             )}
 
+            <input
+              type="file"
+              accept=".csv"
+              ref={importFileInputRef}
+              onChange={handleImportFileSelected}
+              style={{ display: "none" }}
+            />
+
+            <button
+              type="button"
+              className="import-csv-button"
+              onClick={handleImportButtonClick}
+              disabled={isImporting}
+            >
+              {isImporting ? "Reading..." : "Import CSV"}
+            </button>
+
             {dailyRecords.length > 0 && (
               <a
                 className="export-csv-button"
@@ -1310,6 +1411,72 @@ function App() {
             )}
           </div>
         </div>
+
+        {error && <p className="error">Error: {error}</p>}
+        {successMessage && <p className="success">{successMessage}</p>}
+
+        {importPreview && (
+          <div className="import-preview-panel">
+            <h3>Import preview</h3>
+            <p className="import-preview-summary">
+              <strong>{importPreview.new_count}</strong> new day
+              {importPreview.new_count === 1 ? "" : "s"} will be added,{" "}
+              <strong>{importPreview.update_count}</strong> existing day
+              {importPreview.update_count === 1 ? "" : "s"} will be overwritten
+              {importPreview.error_count > 0 && (
+                <>
+                  , and <strong>{importPreview.error_count}</strong> row
+                  {importPreview.error_count === 1 ? "" : "s"} will be skipped due to errors
+                </>
+              )}
+              .
+            </p>
+
+            {importPreview.errors.length > 0 && (
+              <ul className="import-error-list">
+                {importPreview.errors.map((err, index) => (
+                  <li key={index}>
+                    Row {err.row}
+                    {err.date ? ` (${err.date})` : ""}: {err.message}
+                  </li>
+                ))}
+                {importPreview.error_count > importPreview.errors.length && (
+                  <li className="import-error-truncated">
+                    …and {importPreview.error_count - importPreview.errors.length} more
+                  </li>
+                )}
+              </ul>
+            )}
+
+            <div className="import-preview-actions">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={handleConfirmImport}
+                disabled={isImporting}
+              >
+                {isImporting ? "Importing..." : "Confirm import"}
+              </button>
+              <button
+                type="button"
+                className="cancel-edit-button"
+                onClick={handleCancelImport}
+                disabled={isImporting}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {importResult && (
+          <p className="success">
+            Import complete: {importResult.inserted} added, {importResult.updated} updated
+            {importResult.error_count > 0
+              ? `, ${importResult.error_count} row${importResult.error_count === 1 ? "" : "s"} skipped.`
+              : "."}
+          </p>
+        )}
 
       {(isFormOpen || editingDate) && (
       <section className="form-section" ref={formSectionRef}>

@@ -28,6 +28,10 @@
   --danger-text: #f28b8b;
   --danger-fill: #e05a5a;
 
+  --import-bg: rgba(155, 120, 224, 0.16);
+  --import-text: #b39ce0;
+  --import-fill: #9b77d1;
+
   /* Categorical colors for the earnings composition donut — these encode
      "which category," not "good vs bad," so they're intentionally separate
      from the success/warning/danger tokens used for rule-label sentiment. */
@@ -233,6 +237,76 @@ button:disabled {
 
 .export-csv-button:hover {
   background: rgba(59, 167, 118, 0.24);
+}
+
+/* Import CSV — purple, distinct from Add (blue), Export (green), and
+   destructive actions (red), since it's a neutral "bring data in" operation
+   rather than a positive/negative one. */
+.import-csv-button {
+  background: var(--import-bg);
+  border-color: rgba(155, 120, 224, 0.4);
+  color: var(--import-text);
+}
+
+.import-csv-button:hover {
+  background: rgba(155, 120, 224, 0.24);
+}
+
+.import-preview-panel {
+  background: var(--bg-page);
+  border: 1px solid rgba(155, 120, 224, 0.35);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  margin-top: 16px;
+}
+
+.import-preview-panel h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--import-text);
+}
+
+.import-preview-summary {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.import-preview-summary strong {
+  color: var(--text-primary);
+}
+
+.import-error-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  background: var(--bg-surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.import-error-list li {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--danger-text);
+  border-bottom: 1px solid var(--border);
+}
+
+.import-error-list li:last-child {
+  border-bottom: none;
+}
+
+.import-error-list .import-error-truncated {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.import-preview-actions {
+  display: flex;
+  gap: 12px;
 }
 
 .export-csv-button:active {

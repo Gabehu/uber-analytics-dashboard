@@ -10,11 +10,21 @@ from database import (
     get_daily_data,
     get_daily_csv,
     get_weekly_series,
+    preview_csv_import,
+    commit_csv_import,
     create_daily_record,
     update_daily_record,
     delete_daily_record,
 )
-from schemas import Summary, DailyRecord, DailyRecordCreate, WeekSummary
+from schemas import (
+    Summary,
+    DailyRecord,
+    DailyRecordCreate,
+    WeekSummary,
+    ImportRequest,
+    ImportPreviewResult,
+    ImportCommitResult,
+)
 
 
 @asynccontextmanager
@@ -26,7 +36,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Uber Dashboard API",
     description="Backend API for Uber Dashboard v2",
-    version="2.4.0",
+    version="2.6.0",
     lifespan=lifespan,
 )
 
@@ -60,6 +70,16 @@ def daily():
 @app.get("/api/weeks", response_model=list[WeekSummary])
 def weeks():
     return get_weekly_series()
+
+
+@app.post("/api/daily/import/preview", response_model=ImportPreviewResult)
+def import_preview(payload: ImportRequest):
+    return preview_csv_import(payload.csv_text)
+
+
+@app.post("/api/daily/import/commit", response_model=ImportCommitResult)
+def import_commit(payload: ImportRequest):
+    return commit_csv_import(payload.csv_text)
 
 
 # NOTE: this route is declared before "/api/daily/{date}" so that the literal

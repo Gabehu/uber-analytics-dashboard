@@ -1228,3 +1228,183 @@ def _compute_week_wallet_delta(all_rows_asc, week_start, week_end):
         start_date.isoformat(),
         end_date.isoformat(),
     )
+
+
+# ============================================================
+# CSV import (v2.6) — backup/restore, not general-purpose import
+# ============================================================
+#
+# Only RAW input fields are read from the CSV (date, hours, trips, fare,
+# tips, promotions, odometer/time fields, wallet, notes). Any computed
+# column present in an exported CSV (total_earnings, labels, wallet_delta,
+# etc.) is deliberately ignored -- every row is recalculated fresh through
+# the same create_daily_record()/update_daily_record() path a manual entry
+# uses, so imported data can never carry forward stale computed numbers.
+
+
+def _import_optional_float(value):
+    if value is None or str(value).strip() == "":
+        return None
+    return float(value)
+
+
+def _import_optional_text(value):
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value)
+
+
+def _import_required_float(value, default=0.0):
+    if value is None or str(value).strip() == "":
+        return default
+    return float(value)
+
+
+def _import_required_int(value):
+    if value is None or str(value).strip() == "":
+        return 0
+    return int(float(value))
+
+
+class ImportRecord:
+    """
+    Stand-in for DailyRecordCreate, built from one CSV row. Exposes the same
+    attributes validate_daily_record()/calculate_daily_metrics() read.
+    """
+
+    def __init__(self, row):
+        self.date = (row.get("date") or "").strip()
+        self.online_hours = _import_required_float(row.get("online_hours"))
+        self.trips = _import_required_int(row.get("trips"))
+        self.net_fare = _import_required_float(row.get("net_fare"))
+        self.tips = _import_required_float(row.get("tips"))
+        self.promotions = _import_required_float(row.get("promotions"))
+
+        self.miles_driven = _import_optional_float(row.get("miles_driven"))
+
+        self.start_odometer = _import_optional_float(row.get("start_odometer"))
+        self.end_work_odometer = _import_optional_float(row.get("end_work_odometer"))
+        self.end_home_odometer = _import_optional_float(row.get("end_home_odometer"))
+
+        self.work_start_time = _import_optional_text(row.get("work_start_time"))
+        self.uber_stop_time = _import_optional_text(row.get("uber_stop_time"))
+        self.home_end_time = _import_optional_text(row.get("home_end_time"))
+
+        self.wallet_balance = _import_optional_float(row.get("wallet_balance"))
+        self.notes = _import_optional_text(row.get("notes"))
+
+
+def _parse_import_csv(csv_text):
+    """
+    Parses CSV text into a list of (row_number, date, record, error) tuples.
+    row_number starts at 2 (row 1 is the header), matching what a person
+    would see if they opened the file in a spreadsheet. error is a string
+    describing why a row was rejected, or None if it parsed cleanly (parsing
+    only -- business-rule validation happens separately).
+    """
+    reader = csv.DictReader(io.StringIO(csv_text))
+    results = []
+
+    for i, row in enumerate(reader, start=2):
+        date_str = (row.get("date") or "").strip()
+
+        if not date_str:
+            results.append((i, None, None, "Missing date"))
+            continue
+
+        try:
+            record = ImportRecord(row)
+        except (ValueError, TypeError) as error:
+            results.append((i, date_str, None, f"Invalid number in row: {error}"))
+            continue
+
+        results.append((i, date_str, record, None))
+
+    return results
+
+
+def preview_csv_import(csv_text):
+    """
+    Dry run: parses and validates every row but writes nothing. Returns
+    counts of how many rows would be newly inserted, how many would
+    overwrite an existing date, and how many rows are invalid (with reasons
+    for up to the first 20, to keep the response small).
+    """
+    parsed_rows = _parse_import_csv(csv_text)
+    existing_dates = {row["date"] for row in get_daily_data()}
+    seen_dates_in_file = set()
+
+    new_count = 0
+    update_count = 0
+    errors = []
+
+    for row_number, date_str, record, parse_error in parsed_rows:
+        if parse_error:
+            errors.append({"row": row_number, "date": date_str, "message": parse_error})
+            continue
+
+        try:
+            validate_daily_record(record)
+        except ValueError as error:
+            errors.append({"row": row_number, "date": date_str, "message": str(error)})
+            continue
+
+        if date_str in existing_dates or date_str in seen_dates_in_file:
+            update_count += 1
+        else:
+            new_count += 1
+
+        seen_dates_in_file.add(date_str)
+
+    return {
+        "total_rows": len(parsed_rows),
+        "new_count": new_count,
+        "update_count": update_count,
+        "error_count": len(errors),
+        "errors": errors[:20],
+    }
+
+
+def commit_csv_import(csv_text):
+    """
+    Actually performs the import: valid rows are upserted (created if the
+    date is new, overwritten if it already exists), invalid rows are
+    skipped and reported. A duplicate date appearing twice within the same
+    file is treated as create-then-update (last occurrence wins), not a
+    crash, matching "restore" semantics.
+    """
+    parsed_rows = _parse_import_csv(csv_text)
+    existing_dates = {row["date"] for row in get_daily_data()}
+
+    inserted = 0
+    updated = 0
+    errors = []
+
+    for row_number, date_str, record, parse_error in parsed_rows:
+        if parse_error:
+            errors.append({"row": row_number, "date": date_str, "message": parse_error})
+            continue
+
+        try:
+            validate_daily_record(record)
+        except ValueError as error:
+            errors.append({"row": row_number, "date": date_str, "message": str(error)})
+            continue
+
+        try:
+            if date_str in existing_dates:
+                update_daily_record(date_str, record)
+                updated += 1
+            else:
+                create_daily_record(record)
+                inserted += 1
+                existing_dates.add(date_str)
+        except Exception as error:  # noqa: BLE001 - surface any write failure per-row
+            errors.append({"row": row_number, "date": date_str, "message": str(error)})
+
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "error_count": len(errors),
+        "errors": errors[:20],
+    }
