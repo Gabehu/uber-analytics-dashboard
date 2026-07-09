@@ -686,6 +686,45 @@ button:disabled {
   font-weight: 600;
 }
 
+.table-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 4px;
+}
+
+.table-section-header h2 {
+  margin-bottom: 0;
+}
+
+/* Export button — styled like a quiet outline action, matching view/edit.
+   It's an <a> tag (direct download link) so it needs button-like styling
+   applied explicitly rather than inheriting the global button rules. */
+.export-csv-button {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.05s ease;
+}
+
+.export-csv-button:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-2-hover);
+}
+
+.export-csv-button:active {
+  transform: scale(0.98);
+}
+
 table {
   width: 100%;
   min-width: 760px;

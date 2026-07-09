@@ -1,12 +1,14 @@
 import sqlite3
 from contextlib import asynccontextmanager
+from datetime import date as date_cls
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from database import (
     initialize_database,
     get_summary_data,
     get_daily_data,
+    get_daily_csv,
     create_daily_record,
     update_daily_record,
     delete_daily_record,
@@ -23,7 +25,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Uber Dashboard API",
     description="Backend API for Uber Dashboard v2",
-    version="2.1.0",
+    version="2.2.0",
     lifespan=lifespan,
 )
 
@@ -52,6 +54,22 @@ def summary():
 @app.get("/api/daily", response_model=list[DailyRecord])
 def daily():
     return get_daily_data()
+
+
+# NOTE: this route is declared before "/api/daily/{date}" so that the literal
+# path "csv" is matched here rather than being treated as a {date} value.
+@app.get("/api/daily/csv")
+def daily_csv():
+    csv_text = get_daily_csv()
+    filename = f"uber-logs-{date_cls.today().isoformat()}.csv"
+
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
 
 
 @app.post("/api/daily", response_model=DailyRecord, status_code=201)

@@ -1317,7 +1317,18 @@ function App() {
       </section>
 
       <section className="table-section">
-        <h2>Daily logs</h2>
+        <div className="table-section-header">
+          <h2>Daily logs</h2>
+
+          {dailyRecords.length > 0 && (
+            <a
+              className="export-csv-button"
+              href={`${API_BASE_URL}/api/daily/csv`}
+            >
+              Export CSV
+            </a>
+          )}
+        </div>
 
         <table>
           <thead>

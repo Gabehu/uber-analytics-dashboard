@@ -992,3 +992,56 @@ def delete_daily_record(date: str):
     conn.close()
 
     return deleted_count
+
+
+# ============================================================
+# CSV export (v2.2)
+# ============================================================
+
+import csv
+import io
+
+# Canonical column order for CSV export. Mirrors get_daily_data()'s field
+# order for readability. Any field present in the data but missing here is
+# appended at the end rather than dropped, so a future schema addition still
+# exports even if this list isn't updated.
+CSV_COLUMNS = [
+    "date", "online_hours", "trips", "net_fare", "tips", "promotions",
+    "total_earnings", "avg_hourly", "avg_per_trip",
+    "miles_driven", "earnings_per_mile",
+    "start_odometer", "end_work_odometer", "end_home_odometer",
+    "work_miles", "total_outing_miles", "post_work_miles", "miles_per_trip",
+    "earnings_per_work_mile", "earnings_per_total_mile",
+    "work_start_time", "uber_stop_time", "home_end_time",
+    "real_work_hours", "full_outing_hours", "post_work_hours",
+    "earnings_per_real_work_hour", "earnings_per_full_outing_hour",
+    "fare_share", "tip_share", "promo_share",
+    "hourly_label", "promo_label", "tip_label", "mileage_label",
+    "wallet_balance", "notes",
+]
+
+
+def get_daily_csv():
+    """
+    Returns all daily logs serialized as a CSV string, newest first.
+    Reuses get_daily_data() so the exported columns stay in sync with the
+    schema automatically.
+    """
+    rows = get_daily_data()
+
+    known = list(CSV_COLUMNS)
+    extra_keys = []
+    for row in rows:
+        for key in row.keys():
+            if key not in known and key not in extra_keys:
+                extra_keys.append(key)
+
+    fieldnames = known + extra_keys
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key) for key in fieldnames})
+
+    return buffer.getvalue()
