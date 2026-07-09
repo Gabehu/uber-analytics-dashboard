@@ -3,8 +3,13 @@ import "./App.css";
 
 const API_BASE_URL = "http://127.0.0.1:8000";
 
+function getTodayInputValue() {
+  const today = new Date();
+  return today.toISOString().slice(0, 10);
+}
+
 const emptyForm = {
-  date: "",
+  date: getTodayInputValue(),
   online_hours: "",
   trips: "",
   net_fare: "",
@@ -28,6 +33,35 @@ const emptyForm = {
   notes: "",
 };
 
+// Maps a rule-based label to a color meaning, so the UI can encode
+// good/mixed/weak days at a glance instead of using one flat color everywhere.
+const LABEL_VARIANTS = {
+  "Strong hourly": "success",
+  "Good hourly": "success",
+  "Acceptable hourly": "warning",
+  "Weak hourly": "danger",
+  "Bad hourly": "danger",
+
+  "Organic earnings": "success",
+  "Promo helped": "warning",
+  "Promo-carried": "danger",
+
+  "Tip-carried": "success",
+  "Solid tips": "success",
+  "Normal tips": "warning",
+  "Weak tips": "danger",
+
+  "Strong mileage": "success",
+  "Solid mileage": "success",
+  "Questionable mileage": "warning",
+  "Weak mileage": "danger",
+  "Mileage not logged": "neutral",
+};
+
+function getLabelVariant(label) {
+  return LABEL_VARIANTS[label] || "neutral";
+}
+
 function App() {
   const [summary, setSummary] = useState(null);
   const [dailyRecords, setDailyRecords] = useState([]);
@@ -43,6 +77,7 @@ function App() {
   const [editingDate, setEditingDate] = useState(null);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
@@ -342,14 +377,6 @@ function App() {
     return total + record.real_work_hours;
   }, 0);
 
-  const weeklyFullOutingHours = weeklyRecords.reduce((total, record) => {
-    if (record.full_outing_hours === null) {
-      return total;
-    }
-
-    return total + record.full_outing_hours;
-  }, 0);
-
   const weeklyEarningsPerWorkMile =
     weeklyWorkMiles > 0 ? weeklyTotalEarnings / weeklyWorkMiles : null;
 
@@ -481,6 +508,10 @@ function App() {
 
   async function handleSubmit(event) {
     event.preventDefault();
+
+    if (isSubmitting) {
+      return;
+    }
 
     setError("");
     setSuccessMessage("");
@@ -645,6 +676,15 @@ function App() {
     );
 
     if (
+      workStartMinutes !== null &&
+      uberStopMinutes !== null &&
+      uberStopMinutes <= workStartMinutes
+    ) {
+      setError("Uber stop time must be later than work start time.");
+      return;
+    }
+
+    if (
       uberStopMinutes !== null &&
       homeEndMinutes !== null &&
       homeEndMinutes < uberStopMinutes
@@ -653,19 +693,12 @@ function App() {
       return;
     }
 
-    if (
-      uberStopMinutes !== null &&
-      homeEndMinutes !== null &&
-      homeEndMinutes <= uberStopMinutes
-    ) {
-      setError("Home/end time must be later than Uber stop time.");
-      return;
-    }
-
     if (newRecord.wallet_balance !== null && newRecord.wallet_balance < 0) {
       setError("Wallet balance cannot be negative.");
       return;
     }
+
+    setIsSubmitting(true);
 
     try {
       const url = editingDate
@@ -706,6 +739,8 @@ function App() {
       await fetchDashboardData();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -761,7 +796,7 @@ function App() {
 
       {summary ? (
         <section className="summary-grid">
-          <div className="card">
+          <div className="card card-featured">
             <p>Total earnings</p>
             <h2>${summary.total_earnings.toFixed(2)}</h2>
           </div>
@@ -1001,10 +1036,18 @@ function App() {
             <div className="selected-day-extra">
               <div className="selected-day-footer-top">
                 <div className="label-row">
-                  <span>{selectedRecord.hourly_label}</span>
-                  <span>{selectedRecord.promo_label}</span>
-                  <span>{selectedRecord.tip_label}</span>
-                  <span>{selectedRecord.mileage_label}</span>
+                  <span className={`label-chip label-${getLabelVariant(selectedRecord.hourly_label)}`}>
+                    {selectedRecord.hourly_label}
+                  </span>
+                  <span className={`label-chip label-${getLabelVariant(selectedRecord.promo_label)}`}>
+                    {selectedRecord.promo_label}
+                  </span>
+                  <span className={`label-chip label-${getLabelVariant(selectedRecord.tip_label)}`}>
+                    {selectedRecord.tip_label}
+                  </span>
+                  <span className={`label-chip label-${getLabelVariant(selectedRecord.mileage_label)}`}>
+                    {selectedRecord.mileage_label}
+                  </span>
                 </div>
 
                 <p>
@@ -1261,7 +1304,9 @@ function App() {
             </div>
           )}
 
-          <button type="submit">{editingDate ? "Update log" : "Add log"}</button>
+          <button type="submit" className="primary-button" disabled={isSubmitting}>
+            {isSubmitting ? "Saving..." : editingDate ? "Update log" : "Add log"}
+          </button>
 
           {editingDate && (
             <button type="button" className="cancel-edit-button" onClick={cancelEdit}>
@@ -1279,7 +1324,7 @@ function App() {
             <tr>
               <th>Date</th>
               <th>Total</th>
-              <th>$/hr</th>
+              <th>Online $/hr</th>
               <th>Trips</th>
               <th>$/mile</th>
               <th>Status</th>
@@ -1313,9 +1358,15 @@ function App() {
                   </td>
                   <td>
                     <div className="table-labels">
-                      <span>{record.hourly_label}</span>
-                      <span>{record.promo_label}</span>
-                      <span>{record.mileage_label}</span>
+                      <span className={`label-chip label-${getLabelVariant(record.hourly_label)}`}>
+                        {record.hourly_label}
+                      </span>
+                      <span className={`label-chip label-${getLabelVariant(record.promo_label)}`}>
+                        {record.promo_label}
+                      </span>
+                      <span className={`label-chip label-${getLabelVariant(record.mileage_label)}`}>
+                        {record.mileage_label}
+                      </span>
                     </div>
                   </td>
                   <td>
