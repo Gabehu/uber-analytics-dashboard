@@ -243,6 +243,22 @@ function App() {
     return value !== null && value !== undefined ? formatHoursAndMinutes(value) : "—";
   }
 
+  function formatWalletDelta(delta, daysAgo) {
+    if (delta === null || delta === undefined) {
+      return null;
+    }
+
+    const sign = delta >= 0 ? "+" : "−";
+    const amount = `${sign}$${Math.abs(delta).toFixed(2)}`;
+
+    if (daysAgo === null || daysAgo === undefined) {
+      return amount;
+    }
+
+    const whenText = daysAgo === 0 ? "same day logged" : daysAgo === 1 ? "1 day ago" : `${daysAgo} days ago`;
+    return `${amount} · ${whenText}`;
+  }
+
   function handleWeeklyBarClick(day) {
     if (!day.hasRecord) {
       return;
@@ -413,6 +429,10 @@ function App() {
 
   const weeklyEarningsPerRealHour =
     weeklyRealWorkHours > 0 ? weeklyTotalEarnings / weeklyRealWorkHours : null;
+
+  const currentWeekData = selectedWeekStart
+    ? weeks.find((week) => week.week_start === selectedWeekStart)
+    : null;
 
   const maxWeeklyEarnings =
     weeklyChartData.length > 0
@@ -834,6 +854,23 @@ function App() {
       {summary ? (
         <section className="summary-grid">
           <div className="card card-featured">
+            <p>Wallet balance</p>
+            {summary.current_wallet_balance !== null ? (
+              <>
+                <h2>${summary.current_wallet_balance.toFixed(2)}</h2>
+                <span className="card-caption">
+                  as of {formatShortDate(new Date(`${summary.current_wallet_as_of}T00:00:00`))}
+                </span>
+              </>
+            ) : (
+              <>
+                <h2>—</h2>
+                <span className="card-caption">Not logged yet</span>
+              </>
+            )}
+          </div>
+
+          <div className="card">
             <p>Total earnings</p>
             <h2>${summary.total_earnings.toFixed(2)}</h2>
           </div>
@@ -1098,6 +1135,32 @@ function App() {
                     : "—"}
               </strong>
             </div>
+
+            <div>
+              <p>Wallet Δ</p>
+              <strong className="wallet-delta-text">
+                {selectedRecordIsInVisibleWeek
+                  ? (selectedRecord.wallet_delta !== null
+                      ? `${selectedRecord.wallet_delta >= 0 ? "+" : "−"}$${Math.abs(selectedRecord.wallet_delta).toFixed(2)}`
+                      : "—")
+                  : (currentWeekData && currentWeekData.wallet_delta !== null
+                      ? `${currentWeekData.wallet_delta >= 0 ? "+" : "−"}$${Math.abs(currentWeekData.wallet_delta).toFixed(2)}`
+                      : "—")}
+              </strong>
+              <span className="wallet-delta-subtext">
+                {selectedRecordIsInVisibleWeek
+                  ? (selectedRecord.wallet_delta !== null
+                      ? (selectedRecord.wallet_delta_days_ago === 0
+                          ? "same day logged"
+                          : selectedRecord.wallet_delta_days_ago === 1
+                            ? "vs 1 day ago"
+                            : `vs ${selectedRecord.wallet_delta_days_ago} days ago`)
+                      : "")
+                  : (currentWeekData && currentWeekData.wallet_delta !== null
+                      ? `${formatShortDate(new Date(`${currentWeekData.wallet_delta_start_date}T00:00:00`))} → ${formatShortDate(new Date(`${currentWeekData.wallet_delta_end_date}T00:00:00`))}`
+                      : "")}
+              </span>
+            </div>
           </div>
 
           {selectedRecordIsInVisibleWeek && (
@@ -1123,6 +1186,12 @@ function App() {
                   {selectedRecord.wallet_balance !== null
                     ? `$${selectedRecord.wallet_balance.toFixed(2)}`
                     : "Not logged"}
+                  {formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago) && (
+                    <span className="wallet-delta-inline">
+                      {" "}
+                      ({formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago)})
+                    </span>
+                  )}
                 </p>
               </div>
 

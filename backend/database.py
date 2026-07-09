@@ -613,7 +613,10 @@ def get_daily_data():
     rows = cursor.fetchall()
     conn.close()
 
-    return [dict(row) for row in rows]
+    daily_rows = [dict(row) for row in rows]
+    _attach_daily_wallet_deltas(daily_rows)  # newest-first, as required
+
+    return daily_rows
 
 
 def get_summary_data():
@@ -631,6 +634,21 @@ def get_summary_data():
     )
 
     row = cursor.fetchone()
+
+    # Current wallet balance = the most recently logged value, not a sum —
+    # wallet_balance is a snapshot of what's actually there, not a running
+    # total. Not every day logs it, so this is "most recent day that did."
+    cursor.execute(
+        """
+        SELECT date, wallet_balance
+        FROM daily_logs
+        WHERE wallet_balance IS NOT NULL
+        ORDER BY date DESC
+        LIMIT 1
+        """
+    )
+    wallet_row = cursor.fetchone()
+
     conn.close()
 
     total_earnings = row["total_earnings"]
@@ -646,6 +664,8 @@ def get_summary_data():
         "online_hours": round(online_hours, 2),
         "avg_hourly": round(avg_hourly, 2),
         "avg_per_trip": round(avg_per_trip, 2),
+        "current_wallet_balance": round(wallet_row["wallet_balance"], 2) if wallet_row else None,
+        "current_wallet_as_of": wallet_row["date"] if wallet_row else None,
     }
 
 
@@ -1048,7 +1068,7 @@ def get_daily_csv():
 
 
 # ============================================================
-# Weekly series (v2.3 — week jump picker; extendable to v2.4)
+# Weekly series (v2.3 — week jump picker; extendable to v2.4 Option C)
 # ============================================================
 
 from datetime import date as _date, timedelta as _timedelta
@@ -1077,6 +1097,11 @@ def get_weekly_series():
     for row in daily_rows:
         earnings_by_date[row["date"]] = row.get("total_earnings", 0) or 0
 
+    # get_daily_data() returns newest-first; the wallet-delta helper wants
+    # oldest-first, and reuses the already-attached per-day deltas' inputs
+    # (just the date + wallet_balance) rather than recomputing anything.
+    rows_asc = list(reversed(daily_rows))
+
     parsed_dates = [_date.fromisoformat(row["date"]) for row in daily_rows]
     first_monday = _monday_of(min(parsed_dates))
     last_monday = _monday_of(max(parsed_dates))
@@ -1099,14 +1124,107 @@ def get_weekly_series():
                 "has_record": day_key in earnings_by_date,
             })
 
+        wallet_delta, wallet_delta_start_date, wallet_delta_end_date = (
+            _compute_week_wallet_delta(rows_asc, current_monday, week_end)
+        )
+
         weeks.append({
             "week_start": current_monday.isoformat(),
             "week_end": week_end.isoformat(),
             "total_earnings": round(week_total, 2),
             "daily": daily,
+            "wallet_delta": wallet_delta,
+            "wallet_delta_start_date": wallet_delta_start_date,
+            "wallet_delta_end_date": wallet_delta_end_date,
         })
 
         current_monday += _timedelta(days=7)
 
     weeks.reverse()
     return weeks
+
+
+# ============================================================
+# Wallet delta (v2.4)
+# ============================================================
+#
+# Wallet balance is optional and not logged every day, so "delta vs
+# yesterday" doesn't always make sense. Instead, each day's delta is computed
+# against the most recent EARLIER day that also had a wallet balance logged,
+# however many days back that was. This is computed live (not stored) so
+# editing an old day's wallet balance can never leave a stale delta on a
+# later day.
+#
+# NOTE: a wallet delta is informational only, not a judgment. A drop can
+# mean a cash-out/withdrawal rather than "lost money" — there is no rule
+# label or color-coding applied to it for that reason.
+
+from datetime import date as _wallet_date
+
+
+def _attach_daily_wallet_deltas(rows_desc):
+    """
+    rows_desc: daily rows ordered newest-first (as returned by
+    get_daily_data()). Adds 'wallet_delta' and 'wallet_delta_days_ago' to
+    each row in place and returns the same list.
+    """
+    rows_asc = list(reversed(rows_desc))
+
+    last_logged_balance = None
+    last_logged_date = None
+
+    for row in rows_asc:
+        row["wallet_delta"] = None
+        row["wallet_delta_days_ago"] = None
+
+        current_balance = row.get("wallet_balance")
+        current_date = _wallet_date.fromisoformat(row["date"])
+
+        if current_balance is not None:
+            if last_logged_balance is not None:
+                row["wallet_delta"] = round(current_balance - last_logged_balance, 2)
+                row["wallet_delta_days_ago"] = (current_date - last_logged_date).days
+
+            last_logged_balance = current_balance
+            last_logged_date = current_date
+
+    return rows_desc
+
+
+def _compute_week_wallet_delta(all_rows_asc, week_start, week_end):
+    """
+    all_rows_asc: all daily rows (oldest first), each with 'date' and
+    'wallet_balance'. week_start/week_end: date objects.
+
+    Returns (delta, start_reference_date, end_reference_date) as
+    (float|None, str|None, str|None). None when there isn't enough logged
+    data (before AND within/before the week) to compute a real change.
+    """
+    logged = [
+        (_wallet_date.fromisoformat(r["date"]), r["wallet_balance"])
+        for r in all_rows_asc
+        if r.get("wallet_balance") is not None
+    ]
+    logged.sort(key=lambda item: item[0])
+
+    if not logged:
+        return None, None, None
+
+    end_candidates = [item for item in logged if item[0] <= week_end]
+    if not end_candidates:
+        return None, None, None
+    end_date, end_balance = end_candidates[-1]
+
+    start_candidates = [item for item in logged if item[0] < week_start]
+    if not start_candidates:
+        return None, None, None
+    start_date, start_balance = start_candidates[-1]
+
+    if end_date == start_date:
+        return None, None, None
+
+    return (
+        round(end_balance - start_balance, 2),
+        start_date.isoformat(),
+        end_date.isoformat(),
+    )

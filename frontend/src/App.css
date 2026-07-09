@@ -107,7 +107,7 @@ h1 {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 12px;
   margin-bottom: 32px;
 }
@@ -116,6 +116,9 @@ h1 {
   background: var(--bg-surface-1);
   border-radius: var(--radius-md);
   padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .card p {
@@ -142,6 +145,13 @@ h1 {
 .card-featured h2 {
   font-size: 30px;
   color: var(--text-primary);
+}
+
+.card-caption {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 @media (min-width: 640px) {
@@ -661,6 +671,19 @@ button:disabled {
   font-size: 13px;
 }
 
+/* Wallet delta is informational, not a judgment (a drop can be a cash-out,
+   not "lost" money) — deliberately neutral gray, not success/danger colors.
+   Scoped as compound selectors so they reliably override the generic
+   .weekly-breakdown-stats strong/span rules above regardless of source order. */
+.weekly-breakdown-stats .wallet-delta-text {
+  color: var(--text-primary);
+}
+
+.weekly-breakdown-stats .wallet-delta-subtext {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .week-nav {
   display: flex;
   align-items: center;
@@ -778,6 +801,14 @@ button:disabled {
   margin-bottom: 0;
   color: var(--text-secondary);
   font-size: 14px;
+}
+
+/* Wallet delta, inline next to "Wallet: $X" — neutral, informational only.
+   Deliberately not colored success/danger: a drop can be a cash-out rather
+   than money lost, so no judgment is implied either way. */
+.wallet-delta-inline {
+  color: var(--text-muted);
+  font-weight: 400;
 }
 
 @media (max-width: 700px) {

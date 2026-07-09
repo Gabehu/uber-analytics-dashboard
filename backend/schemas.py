@@ -7,6 +7,8 @@ class Summary(BaseModel):
     online_hours: float
     avg_hourly: float
     avg_per_trip: float
+    current_wallet_balance: float | None = None
+    current_wallet_as_of: str | None = None
 
 
 class WeekDay(BaseModel):
@@ -20,6 +22,9 @@ class WeekSummary(BaseModel):
     week_end: str
     total_earnings: float
     daily: list[WeekDay]
+    wallet_delta: float | None = None
+    wallet_delta_start_date: str | None = None
+    wallet_delta_end_date: str | None = None
 
 
 class DailyRecordCreate(BaseModel):
@@ -90,4 +95,6 @@ class DailyRecord(BaseModel):
     mileage_label: str
 
     wallet_balance: float | None = None
+    wallet_delta: float | None = None
+    wallet_delta_days_ago: int | None = None
     notes: str | None = None
