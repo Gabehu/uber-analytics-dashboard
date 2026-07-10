@@ -82,6 +82,8 @@ class DailyRecordCreate(BaseModel):
     wallet_balance: float | None = None
     notes: str | None = None
 
+    day_tags: list[str] | None = None
+
 
 class DailyRecord(BaseModel):
     date: str
@@ -132,3 +134,5 @@ class DailyRecord(BaseModel):
     wallet_delta: float | None = None
     wallet_delta_days_ago: int | None = None
     notes: str | None = None
+
+    day_tags: list[str] | None = None

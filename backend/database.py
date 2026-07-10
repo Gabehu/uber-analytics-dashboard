@@ -5,6 +5,50 @@ from pathlib import Path
 DATABASE_PATH = Path(__file__).parent / "uber_dashboard.db"
 
 
+# ============================================================
+# Day Effects (v3.1) — fixed tag vocabulary
+# ============================================================
+#
+# A small, closed set of self-reported conditions, distinct from the app's
+# computed rule-based labels (hourly/promo/tip/mileage). These describe
+# what happened, not a judgment about how the day performed, so they're
+# stored and displayed separately from LabelChip-style labels.
+
+ALLOWED_DAY_TAGS = {
+    "rain",
+    "snow",
+    "heavy_traffic",
+    "high_demand",
+    "low_demand",
+    "good_orders",
+    "bad_orders",
+    "quest_day",
+    "app_issues",
+    "low_battery",
+    "phone_hotspot_issues",
+}
+
+
+def _day_tags_to_storage(tags):
+    """Converts a list of tag values into the comma-joined string stored in
+    the day_tags DB column. Returns None for an empty/missing list so the
+    column stays NULL rather than storing an empty string."""
+    if not tags:
+        return None
+
+    return ",".join(tags)
+
+
+def _day_tags_from_storage(stored_value):
+    """Converts the stored comma-joined string back into a list of tag
+    values. Returns None for NULL/empty so untagged days come back as None,
+    not an empty list."""
+    if stored_value is None or stored_value == "":
+        return None
+
+    return [tag for tag in stored_value.split(",") if tag]
+
+
 def round_optional(value, decimals=2):
     if value is None:
         return None
@@ -170,6 +214,12 @@ def validate_daily_record(record):
     wallet_balance = record.wallet_balance
     if wallet_balance is not None and wallet_balance < 0:
         raise ValueError("Wallet balance cannot be negative.")
+
+    day_tags = getattr(record, "day_tags", None)
+    if day_tags:
+        invalid_tags = sorted(set(day_tags) - ALLOWED_DAY_TAGS)
+        if invalid_tags:
+            raise ValueError(f"Unknown day effect tag(s): {', '.join(invalid_tags)}")
 
 def get_connection():
     conn = sqlite3.connect(DATABASE_PATH)
@@ -370,10 +420,17 @@ def initialize_database():
             mileage_label TEXT NOT NULL,
 
             wallet_balance REAL,
-            notes TEXT
+            notes TEXT,
+
+            day_tags TEXT
         )
         """
     )
+
+    try:
+        cursor.execute("ALTER TABLE daily_logs ADD COLUMN day_tags TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     # These 4 rows are a minimal "starter" set so a brand-new install isn't
     # a completely blank dashboard on first run -- separate from and much
@@ -393,6 +450,7 @@ def initialize_database():
             "miles_driven": None,
             "wallet_balance": None,
             "notes": "Seed data from previous test record.",
+            "day_tags": None,
         },
         {
             "date": "2026-06-23",
@@ -404,6 +462,7 @@ def initialize_database():
             "miles_driven": None,
             "wallet_balance": None,
             "notes": "Seed data from previous test record.",
+            "day_tags": None,
         },
         {
             "date": "2026-06-24",
@@ -415,6 +474,7 @@ def initialize_database():
             "miles_driven": None,
             "wallet_balance": None,
             "notes": "Seed data from previous test record.",
+            "day_tags": None,
         },
         {
             "date": "2026-06-25",
@@ -426,32 +486,34 @@ def initialize_database():
             "miles_driven": None,
             "wallet_balance": None,
             "notes": "Seed data from previous test record.",
+            "day_tags": None,
         },
     ]
 
+    class SeedRecord:
+        def __init__(self, data):
+            self.date = data["date"]
+            self.online_hours = data["online_hours"]
+            self.trips = data["trips"]
+            self.net_fare = data["net_fare"]
+            self.tips = data["tips"]
+            self.promotions = data["promotions"]
+
+            self.miles_driven = data["miles_driven"]
+
+            self.start_odometer = None
+            self.end_work_odometer = None
+            self.end_home_odometer = None
+
+            self.work_start_time = None
+            self.uber_stop_time = None
+            self.home_end_time = None
+
+            self.wallet_balance = data["wallet_balance"]
+            self.notes = data["notes"]
+            self.day_tags = data.get("day_tags")
+
     for record in sample_data:
-        class SeedRecord:
-            def __init__(self, data):
-                self.date = data["date"]
-                self.online_hours = data["online_hours"]
-                self.trips = data["trips"]
-                self.net_fare = data["net_fare"]
-                self.tips = data["tips"]
-                self.promotions = data["promotions"]
-
-                self.miles_driven = data["miles_driven"]
-
-                self.start_odometer = None
-                self.end_work_odometer = None
-                self.end_home_odometer = None
-
-                self.work_start_time = None
-                self.uber_stop_time = None
-                self.home_end_time = None
-
-                self.wallet_balance = data["wallet_balance"]
-                self.notes = data["notes"]
-
         seed_record = SeedRecord(record)
         metrics = calculate_daily_metrics(seed_record)
 
@@ -503,9 +565,11 @@ def initialize_database():
                 mileage_label,
 
                 wallet_balance,
-                notes
+                notes,
+
+                day_tags
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["date"],
@@ -553,6 +617,8 @@ def initialize_database():
 
                 record["wallet_balance"],
                 record["notes"],
+
+                _day_tags_to_storage(record.get("day_tags")),
             ),
         )
 
@@ -611,7 +677,9 @@ def get_daily_data():
             mileage_label,
 
             wallet_balance,
-            notes
+            notes,
+
+            day_tags
         FROM daily_logs
         ORDER BY date DESC
         """
@@ -621,6 +689,10 @@ def get_daily_data():
     conn.close()
 
     daily_rows = [dict(row) for row in rows]
+
+    for row in daily_rows:
+        row["day_tags"] = _day_tags_from_storage(row.get("day_tags"))
+
     _attach_daily_wallet_deltas(daily_rows)  # newest-first, as required
 
     return daily_rows
@@ -731,9 +803,11 @@ def create_daily_record(record):
             mileage_label,
 
             wallet_balance,
-            notes
+            notes,
+
+            day_tags
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record.date,
@@ -781,6 +855,8 @@ def create_daily_record(record):
 
             record.wallet_balance,
             record.notes,
+
+            _day_tags_to_storage(record.day_tags),
         ),
     )
 
@@ -834,6 +910,8 @@ def create_daily_record(record):
 
         "wallet_balance": record.wallet_balance,
         "notes": record.notes,
+
+        "day_tags": record.day_tags,
     }
 
 
@@ -891,7 +969,9 @@ def update_daily_record(date: str, record):
             mileage_label = ?,
 
             wallet_balance = ?,
-            notes = ?
+            notes = ?,
+
+            day_tags = ?
         WHERE date = ?
         """,
         (
@@ -939,6 +1019,9 @@ def update_daily_record(date: str, record):
 
             record.wallet_balance,
             record.notes,
+
+            _day_tags_to_storage(record.day_tags),
+
             date,
         ),
     )
@@ -998,6 +1081,8 @@ def update_daily_record(date: str, record):
 
         "wallet_balance": record.wallet_balance,
         "notes": record.notes,
+
+        "day_tags": record.day_tags,
     }
 
 
@@ -1064,6 +1149,7 @@ CSV_COLUMNS = [
     "fare_share", "tip_share", "promo_share",
     "hourly_label", "promo_label", "tip_label", "mileage_label",
     "wallet_balance", "notes",
+    "day_tags",
 ]
 
 
@@ -1088,7 +1174,14 @@ def get_daily_csv():
     writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     for row in rows:
-        writer.writerow({key: row.get(key) for key in fieldnames})
+        # day_tags comes back from get_daily_data() as a list (or None) for
+        # API consumption; CSV needs it flattened back to a single
+        # comma-joined string ("rain,bad_orders"), same format
+        # ImportRecord expects to read back in.
+        row_for_csv = dict(row)
+        row_for_csv["day_tags"] = _day_tags_to_storage(row.get("day_tags"))
+
+        writer.writerow({key: row_for_csv.get(key) for key in fieldnames})
 
     return buffer.getvalue()
 
@@ -1261,11 +1354,12 @@ def _compute_week_wallet_delta(all_rows_asc, week_start, week_end):
 # ============================================================
 #
 # Only RAW input fields are read from the CSV (date, hours, trips, fare,
-# tips, promotions, odometer/time fields, wallet, notes). Any computed
-# column present in an exported CSV (total_earnings, labels, wallet_delta,
-# etc.) is deliberately ignored -- every row is recalculated fresh through
-# the same create_daily_record()/update_daily_record() path a manual entry
-# uses, so imported data can never carry forward stale computed numbers.
+# tips, promotions, odometer/time fields, wallet, notes, day_tags). Any
+# computed column present in an exported CSV (total_earnings, labels,
+# wallet_delta, etc.) is deliberately ignored -- every row is recalculated
+# fresh through the same create_daily_record()/update_daily_record() path a
+# manual entry uses, so imported data can never carry forward stale
+# computed numbers.
 
 
 def _import_optional_float(value):
@@ -1290,6 +1384,18 @@ def _import_required_int(value):
     if value is None or str(value).strip() == "":
         return 0
     return int(float(value))
+
+
+def _import_day_tags(value):
+    """Parses the day_tags CSV cell ("rain,bad_orders") into a list. Unknown
+    tag values are left in the list here -- validate_daily_record() is what
+    actually rejects them, same as every other field, so import errors are
+    reported consistently (row + message) rather than silently dropped."""
+    if value is None or str(value).strip() == "":
+        return None
+
+    tags = [tag.strip() for tag in str(value).split(",") if tag.strip()]
+    return tags or None
 
 
 class ImportRecord:
@@ -1318,6 +1424,8 @@ class ImportRecord:
 
         self.wallet_balance = _import_optional_float(row.get("wallet_balance"))
         self.notes = _import_optional_text(row.get("notes"))
+
+        self.day_tags = _import_day_tags(row.get("day_tags"))
 
 
 def _parse_import_csv(csv_text):

@@ -19,6 +19,252 @@ const DAILY_LOG_SORT_OPTIONS = [
   { value: "trips-asc", label: "Fewest trips" },
 ];
 
+// Day Effects (v3.1) — fixed tag vocabulary, grouped for the form's chip
+// picker. Mirrors ALLOWED_DAY_TAGS in the backend; keep both lists in sync
+// if a tag is ever added, renamed, or removed. `category` drives the icon
+// shown alongside each tag: one glyph per category (not per tag) keeps the
+// icon set small/maintainable while still giving the eye a fast non-text
+// anchor for the *type* of condition, with the text supplying the specific
+// one. Categories are deliberately NOT color-coded by sentiment -- a day
+// effect is an observed condition, not a verdict on the day.
+const DAY_TAG_GROUPS = [
+  {
+    group: "Weather",
+    category: "weather",
+    tags: [
+      { value: "rain", label: "Rain" },
+      { value: "snow", label: "Snow" },
+    ],
+  },
+  {
+    group: "Demand & traffic",
+    category: "traffic",
+    tags: [
+      { value: "heavy_traffic", label: "Heavy traffic" },
+      { value: "high_demand", label: "High demand" },
+      { value: "low_demand", label: "Low demand" },
+    ],
+  },
+  {
+    group: "Order quality",
+    category: "orders",
+    tags: [
+      { value: "good_orders", label: "Good orders" },
+      { value: "bad_orders", label: "Bad orders" },
+    ],
+  },
+  {
+    group: "Operational",
+    category: "operational",
+    tags: [
+      { value: "quest_day", label: "Quest day" },
+      { value: "app_issues", label: "App issues" },
+      { value: "low_battery", label: "Low battery" },
+      { value: "phone_hotspot_issues", label: "Phone/hotspot issues" },
+    ],
+  },
+];
+
+const DAY_TAG_LABELS = Object.fromEntries(
+  DAY_TAG_GROUPS.flatMap((group) => group.tags.map((tag) => [tag.value, tag.label]))
+);
+
+// Maps each tag value to its category, so a lone tag (in the table or the
+// selected-day row) can find its icon without re-walking the groups.
+const DAY_TAG_CATEGORY = Object.fromEntries(
+  DAY_TAG_GROUPS.flatMap((group) => group.tags.map((tag) => [tag.value, group.category]))
+);
+
+function getDayTagLabel(tagValue) {
+  return DAY_TAG_LABELS[tagValue] || tagValue;
+}
+
+function getDayTagCategory(tagValue) {
+  return DAY_TAG_CATEGORY[tagValue] || "operational";
+}
+
+// One small inline SVG per category — no icon-library dependency. Each is a
+// simple 16x16 path tuned to read at chip size. `weather` = raindrop,
+// `traffic` = up/down flow arrows, `orders` = a bag, `operational` = a gear.
+function DayTagIcon({ category }) {
+  const paths = {
+    weather: (
+      <path
+        d="M8 1.5c2.2 2.8 4 5 4 7a4 4 0 1 1-8 0c0-2 1.8-4.2 4-7z"
+        fill="currentColor"
+      />
+    ),
+    traffic: (
+      <g fill="currentColor">
+        <path d="M4.5 2.5l2.2 2.6H5.3v3.2H3.7V5.1H2.3z" />
+        <path d="M11.5 13.5l-2.2-2.6h1.4V7.7h1.6v3.2h1.4z" />
+      </g>
+    ),
+    orders: (
+      <path
+        d="M4 5V4a2 2 0 0 1 4 0v1h.5A1.5 1.5 0 0 1 10 6.5V12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6.5A1.5 1.5 0 0 1 3.5 5H4zm1 0h2V4a1 1 0 0 0-2 0v1z"
+        fill="currentColor"
+        transform="translate(2 0)"
+      />
+    ),
+    operational: (
+      <path
+        d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zm6.2 3.2l-1.3-.8a5 5 0 0 0 0-1.8l1.3-.8-1.3-2.2-1.4.6a5 5 0 0 0-1.5-.9l-.2-1.5H6.9l-.2 1.5a5 5 0 0 0-1.5.9l-1.4-.6-1.3 2.2 1.3.8a5 5 0 0 0 0 1.8l-1.3.8 1.3 2.2 1.4-.6c.45.37.96.68 1.5.9l.2 1.5h2.2l.2-1.5a5 5 0 0 0 1.5-.9l1.4.6z"
+        fill="currentColor"
+        opacity="0.9"
+      />
+    ),
+  };
+
+  return (
+    <svg
+      className="day-tag-icon"
+      viewBox="0 0 16 16"
+      width="12"
+      height="12"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {paths[category] || paths.operational}
+    </svg>
+  );
+}
+
+// Short human sentence for a tag's tooltip, so day-effect pills get the same
+// hover affordance the rule-based status chips have (a pill with no tooltip
+// sitting next to pills that have them looks broken).
+const DAY_TAG_CATEGORY_LABEL = {
+  weather: "Weather condition",
+  traffic: "Demand / traffic condition",
+  orders: "Order-quality condition",
+  operational: "Operational condition",
+};
+
+function getDayTagTooltip(tagValue) {
+  const category = getDayTagCategory(tagValue);
+  return `${getDayTagLabel(tagValue)} — ${DAY_TAG_CATEGORY_LABEL[category] || "condition"} you tagged for this day.`;
+}
+
+// A single day-effect pill: icon + label + tooltip, used in both the
+// selected-day row and the table's Effects column so the feature has one
+// consistent look everywhere. `inTable` renders a slightly more compact
+// variant for the table's Effects column.
+function DayTagChip({ tagValue, inTable = false }) {
+  const category = getDayTagCategory(tagValue);
+
+  return (
+    <span className="day-tag-tooltip-wrap">
+      <span
+        className={`day-tag-chip day-tag-chip-${category} ${inTable ? "day-tag-chip-table" : ""}`}
+        tabIndex="0"
+      >
+        <DayTagIcon category={category} />
+        <span className="day-tag-chip-label">{getDayTagLabel(tagValue)}</span>
+      </span>
+      <span className="day-tag-tooltip" role="tooltip">
+        {getDayTagTooltip(tagValue)}
+      </span>
+    </span>
+  );
+}
+
+// The "+N" overflow pill in the table's Effects column. Same styled-tooltip
+// pattern as DayTagChip/LabelChip, but lists every hidden tag (each with its
+// own category icon) instead of a single sentence, since there can be
+// several. Kept as its own component rather than bolting a list onto
+// DayTagChip so that component's tooltip stays a single-tag sentence.
+function DayTagOverflowChip({ tagValues }) {
+  return (
+    <span className="day-tag-tooltip-wrap">
+      <span className="table-day-tag-more" tabIndex="0">
+        +{tagValues.length}
+      </span>
+      <span className="day-tag-tooltip day-tag-overflow-tooltip" role="tooltip">
+        {tagValues.map((tag) => {
+          const category = getDayTagCategory(tag);
+          return (
+            <span className="day-tag-overflow-row" key={tag}>
+              <DayTagIcon category={category} />
+              <span>{getDayTagLabel(tag)}</span>
+            </span>
+          );
+        })}
+      </span>
+    </span>
+  );
+}
+
+
+// Small inline action icons for the Daily logs table (View/Hide, Edit,
+// Delete). Icon-only + title/aria-label rather than full text buttons,
+// which is what was forcing the Actions column to stay so wide that
+// Online $/hr and other columns had no room and started wrapping.
+//
+// These use the Feather icon set's paths (MIT licensed, stroke-based
+// rather than filled shapes). An earlier version hand-drew custom filled
+// paths at this same small size, which is easy to get subtly wrong -- a
+// slightly-off fill path renders as a blob instead of a recognizable shape.
+// Stroke-based paths from an established set are far less fragile at
+// small sizes, so this swaps to known-good geometry rather than another
+// hand-tuned guess.
+function IconBase({ children }) {
+  return (
+    <svg
+      className="action-icon"
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function ViewIcon() {
+  return (
+    <IconBase>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </IconBase>
+  );
+}
+
+function HideIcon() {
+  return (
+    <IconBase>
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+      <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </IconBase>
+  );
+}
+
+function EditIcon() {
+  return (
+    <IconBase>
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+    </IconBase>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <IconBase>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </IconBase>
+  );
+}
 
 function toLocalInputDate(date) {
   const year = date.getFullYear();
@@ -56,6 +302,8 @@ function createEmptyForm(date = getTodayInputValue()) {
 
     wallet_balance: "",
     notes: "",
+
+    day_tags: [],
   };
 }
 
@@ -325,6 +573,7 @@ function App() {
   const [selectedWeekStart, setSelectedWeekStart] = useState(null);
   const [formData, setFormData] = useState(() => createEmptyForm());
   const [showAdvancedTracking, setShowAdvancedTracking] = useState(false);
+  const [showDayEffects, setShowDayEffects] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingDate, setEditingDate] = useState(null);
   const [error, setError] = useState("");
@@ -337,6 +586,7 @@ function App() {
   const [dailyLogStatusFilter, setDailyLogStatusFilter] = useState("all");
   const [dailyLogMonthFilter, setDailyLogMonthFilter] = useState("all");
   const [dailyLogWalletFilter, setDailyLogWalletFilter] = useState("all");
+  const [dailyLogTagFilter, setDailyLogTagFilter] = useState("all");
   const [isDailyLogToolsOpen, setIsDailyLogToolsOpen] = useState(false);
 
   const formSectionRef = useRef(null);
@@ -594,6 +844,20 @@ function App() {
 
     const whenText = daysAgo === 0 ? "same day logged" : daysAgo === 1 ? "1 day ago" : `${daysAgo} days ago`;
     return `${amount} · ${whenText}`;
+  }
+
+  function toggleDayTag(tagValue) {
+    setFormData((currentFormData) => {
+      const currentTags = currentFormData.day_tags || [];
+      const isSelected = currentTags.includes(tagValue);
+
+      return {
+        ...currentFormData,
+        day_tags: isSelected
+          ? currentTags.filter((tag) => tag !== tagValue)
+          : [...currentTags, tagValue],
+      };
+    });
   }
 
   function handleWeeklyBarClick(day) {
@@ -1014,7 +1278,11 @@ function App() {
       (dailyLogWalletFilter === "missing" &&
         (record.wallet_balance === null || record.wallet_balance === undefined));
 
-    return matchesStatus && matchesMonth && matchesWallet;
+    const matchesTag =
+      dailyLogTagFilter === "all" ||
+      (Array.isArray(record.day_tags) && record.day_tags.includes(dailyLogTagFilter));
+
+    return matchesStatus && matchesMonth && matchesWallet && matchesTag;
   });
 
   const sortedDailyRecords = [...filteredDailyRecords].sort((a, b) => {
@@ -1035,7 +1303,8 @@ function App() {
   const hasActiveDailyLogFilters =
     dailyLogStatusFilter !== "all" ||
     dailyLogMonthFilter !== "all" ||
-    dailyLogWalletFilter !== "all";
+    dailyLogWalletFilter !== "all" ||
+    dailyLogTagFilter !== "all";
 
   const hasCustomDailyLogTableView =
     hasActiveDailyLogFilters || dailyLogSort !== "date-desc";
@@ -1053,6 +1322,7 @@ function App() {
       : dailyLogWalletFilter === "missing"
         ? "Wallet missing only"
         : null,
+    dailyLogTagFilter !== "all" ? getDayTagLabel(dailyLogTagFilter) : null,
   ].filter(Boolean);
 
   const totalFilteredDailyLogs = sortedDailyRecords.length;
@@ -1131,7 +1401,14 @@ function App() {
 
   useEffect(() => {
     setDailyLogPage(1);
-  }, [dailyLogPageSize, dailyLogSort, dailyLogStatusFilter, dailyLogMonthFilter, dailyLogWalletFilter]);
+  }, [
+    dailyLogPageSize,
+    dailyLogSort,
+    dailyLogStatusFilter,
+    dailyLogMonthFilter,
+    dailyLogWalletFilter,
+    dailyLogTagFilter,
+  ]);
 
   useEffect(() => {
     if (!error && !successMessage && !importResult) {
@@ -1186,6 +1463,7 @@ function App() {
     setDailyLogStatusFilter("all");
     setDailyLogMonthFilter("all");
     setDailyLogWalletFilter("all");
+    setDailyLogTagFilter("all");
     setDailyLogPage(1);
   }
 
@@ -1200,6 +1478,7 @@ function App() {
     setIsFormOpen(true);
     setFormData(createEmptyForm(dateString));
     setShowAdvancedTracking(false);
+    setShowDayEffects(false);
     setSelectedRecordDate(dateString);
 
     const weekStart = getWeekStart(dateString);
@@ -1254,6 +1533,8 @@ function App() {
 
       wallet_balance: formNumber(record.wallet_balance),
       notes: record.notes || "",
+
+      day_tags: record.day_tags || [],
     });
 
     setShowAdvancedTracking(
@@ -1265,6 +1546,11 @@ function App() {
         record.home_end_time !== null
     );
 
+    // Auto-expand Day Effects only if this record already has tags, so
+    // editing a tagged day surfaces them, but editing an untagged day keeps
+    // the form compact.
+    setShowDayEffects(Array.isArray(record.day_tags) && record.day_tags.length > 0);
+
     setError("");
     setSuccessMessage("");
   }
@@ -1274,6 +1560,7 @@ function App() {
     setIsFormOpen(false);
     setFormData(createEmptyForm());
     setShowAdvancedTracking(false);
+    setShowDayEffects(false);
     setError("");
     setSuccessMessage("");
   }
@@ -1324,6 +1611,9 @@ function App() {
 
       wallet_balance: optionalNumber(formData.wallet_balance),
       notes: optionalText(formData.notes),
+
+      day_tags:
+        formData.day_tags && formData.day_tags.length > 0 ? formData.day_tags : null,
     };
 
     if (
@@ -1503,6 +1793,7 @@ function App() {
 
       setFormData(createEmptyForm());
       setShowAdvancedTracking(false);
+      setShowDayEffects(false);
       setIsFormOpen(false);
       setSelectedRecordDate(savedRecord.date);
 
@@ -1552,6 +1843,7 @@ function App() {
         setEditingDate(null);
         setFormData(createEmptyForm());
         setShowAdvancedTracking(false);
+        setShowDayEffects(false);
       }
 
       setSuccessMessage("Daily record deleted.");
@@ -2088,29 +2380,49 @@ function App() {
                         <LabelChip label={selectedRecord.tip_label} record={selectedRecord} />
                         <LabelChip label={selectedRecord.mileage_label} record={selectedRecord} />
                       </div>
-
-                      <button
-                        type="button"
-                        className="edit-button selected-day-edit-button"
-                        onClick={() => handleEdit(selectedRecord)}
-                      >
-                        Edit this day
-                      </button>
                     </div>
 
-                    <p>
-                      <strong>Wallet:</strong>{" "}
-                      {selectedRecord.wallet_balance !== null
-                        ? `$${selectedRecord.wallet_balance.toFixed(2)}`
-                        : "Not logged"}
-                      {formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago) && (
-                        <span className="wallet-delta-inline">
-                          {" "}
-                          ({formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago)})
-                        </span>
-                      )}
-                    </p>
+                    <div className="selected-day-footer-right">
+                      <p>
+                        <strong>Wallet:</strong>{" "}
+                        {selectedRecord.wallet_balance !== null
+                          ? `$${selectedRecord.wallet_balance.toFixed(2)}`
+                          : "Not logged"}
+                        {formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago) && (
+                          <span className="wallet-delta-inline">
+                            {" "}
+                            ({formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago)})
+                          </span>
+                        )}
+                      </p>
+
+                      <div className="selected-day-action-row">
+                        <button
+                          type="button"
+                          className="edit-button selected-day-action-button"
+                          onClick={() => handleEdit(selectedRecord)}
+                        >
+                          Edit this day
+                        </button>
+
+                        <button
+                          type="button"
+                          className="delete-button selected-day-action-button"
+                          onClick={() => handleDelete(selectedRecord.date)}
+                        >
+                          Delete this day
+                        </button>
+                      </div>
+                    </div>
                   </div>
+
+                  {Array.isArray(selectedRecord.day_tags) && selectedRecord.day_tags.length > 0 && (
+                    <div className="day-tag-display-row">
+                      {selectedRecord.day_tags.map((tag) => (
+                        <DayTagChip tagValue={tag} key={tag} />
+                      ))}
+                    </div>
+                  )}
 
                   {selectedRecord.notes && (
                     <div className="recap-notes">
@@ -2382,13 +2694,65 @@ function App() {
             />
           </label>
 
-          <button
-            type="button"
-            className="advanced-toggle-button"
-            onClick={() => setShowAdvancedTracking((currentValue) => !currentValue)}
-          >
-            {showAdvancedTracking ? "Hide advanced tracking" : "Show advanced tracking"}
-          </button>
+          <div className="form-toggle-row">
+            <button
+              type="button"
+              className="advanced-toggle-button"
+              onClick={() => setShowAdvancedTracking((currentValue) => !currentValue)}
+            >
+              {showAdvancedTracking ? "Hide advanced tracking" : "Show advanced tracking"}
+            </button>
+
+            <button
+              type="button"
+              className="day-effects-toggle-button"
+              onClick={() => setShowDayEffects((currentValue) => !currentValue)}
+              aria-expanded={showDayEffects}
+            >
+              {showDayEffects ? "Hide day effects" : "Show day effects"}
+              {(formData.day_tags || []).length > 0 && (
+                <span className="day-effects-count">{formData.day_tags.length}</span>
+              )}
+            </button>
+          </div>
+
+          {showDayEffects && (
+            <div className="day-tags-section">
+              <div className="advanced-section-heading">
+                <h3>Day effects</h3>
+                <p>
+                  Optional tags for context — conditions that affected this
+                  shift, separate from the raw numbers above.
+                </p>
+              </div>
+
+              {DAY_TAG_GROUPS.map((group) => (
+                <div className="day-tag-group" key={group.group}>
+                  <span className="day-tag-group-label">
+                    <DayTagIcon category={group.category} />
+                    {group.group}
+                  </span>
+                  <div className="day-tag-chip-row">
+                    {group.tags.map((tag) => {
+                      const isSelected = (formData.day_tags || []).includes(tag.value);
+
+                      return (
+                        <button
+                          type="button"
+                          key={tag.value}
+                          className={`day-tag-toggle ${isSelected ? "day-tag-toggle-active" : ""}`}
+                          onClick={() => toggleDayTag(tag.value)}
+                          aria-pressed={isSelected}
+                        >
+                          {tag.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {showAdvancedTracking && (
             <div className="advanced-tracking-panel">
@@ -2607,6 +2971,25 @@ function App() {
                   <option value="missing">Wallet missing only</option>
                 </select>
               </label>
+
+              <label>
+                Day effect
+                <select
+                  value={dailyLogTagFilter}
+                  onChange={(event) => setDailyLogTagFilter(event.target.value)}
+                >
+                  <option value="all">All day effects</option>
+                  {DAY_TAG_GROUPS.map((group) => (
+                    <optgroup label={group.group} key={group.group}>
+                      {group.tags.map((tag) => (
+                        <option key={tag.value} value={tag.value}>
+                          {tag.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
             </div>
 
             <p className="daily-log-filter-summary">
@@ -2617,6 +3000,7 @@ function App() {
           </div>
         )}
 
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -2626,6 +3010,7 @@ function App() {
               <th>Trips</th>
               <th>$/mile</th>
               <th>Status</th>
+              <th>Effects</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -2633,13 +3018,13 @@ function App() {
           <tbody>
             {dailyRecords.length === 0 ? (
               <tr>
-                <td colSpan="7" className="empty-table-cell">
+                <td colSpan="8" className="empty-table-cell">
                   No daily logs yet.
                 </td>
               </tr>
             ) : paginatedDailyRecords.length === 0 ? (
               <tr>
-                <td colSpan="7" className="empty-table-cell">
+                <td colSpan="8" className="empty-table-cell">
                   No daily logs match the current filters.
                 </td>
               </tr>
@@ -2668,10 +3053,26 @@ function App() {
                     </div>
                   </td>
                   <td>
+                    {Array.isArray(record.day_tags) && record.day_tags.length > 0 ? (
+                      <div className="table-day-tags">
+                        {record.day_tags.slice(0, 2).map((tag) => (
+                          <DayTagChip tagValue={tag} inTable key={tag} />
+                        ))}
+                        {record.day_tags.length > 2 && (
+                          <DayTagOverflowChip tagValues={record.day_tags.slice(2)} />
+                        )}
+                      </div>
+                    ) : (
+                      <span className="table-day-tags-empty">—</span>
+                    )}
+                  </td>
+                  <td>
                     <div className="table-actions">
                       <button
                         type="button"
-                        className="view-button"
+                        className="view-button table-icon-button"
+                        title={selectedRecordDate === record.date ? "Hide" : "View"}
+                        aria-label={selectedRecordDate === record.date ? "Hide" : "View"}
                         onClick={() => {
                           if (selectedRecordDate === record.date) {
                             setSelectedRecordDate(null);
@@ -2681,23 +3082,27 @@ function App() {
                           }
                         }}
                       >
-                        {selectedRecordDate === record.date ? "Hide" : "View"}
+                        {selectedRecordDate === record.date ? <HideIcon /> : <ViewIcon />}
                       </button>
 
                       <button
                         type="button"
-                        className="edit-button"
+                        className="edit-button table-icon-button"
+                        title="Edit"
+                        aria-label="Edit"
                         onClick={() => handleEdit(record)}
                       >
-                        Edit
+                        <EditIcon />
                       </button>
 
                       <button
                         type="button"
-                        className="delete-button"
+                        className="delete-button table-icon-button"
+                        title="Delete"
+                        aria-label="Delete"
                         onClick={() => handleDelete(record.date)}
                       >
-                        Delete
+                        <DeleteIcon />
                       </button>
                     </div>
                   </td>
@@ -2706,6 +3111,7 @@ function App() {
             )}
           </tbody>
         </table>
+        </div>
 
         {dailyRecords.length > 0 && totalFilteredDailyLogs > 0 && (
           <div className="table-pagination">
