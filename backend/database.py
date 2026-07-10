@@ -375,6 +375,13 @@ def initialize_database():
         """
     )
 
+    # These 4 rows are a minimal "starter" set so a brand-new install isn't
+    # a completely blank dashboard on first run -- separate from and much
+    # smaller than seed_mock.py, which is an opt-in dev script for
+    # generating many weeks of richer test data on demand (see that file).
+    # INSERT OR IGNORE below means these are only ever added once, on the
+    # very first table creation; they won't reappear or duplicate after
+    # that, and won't overwrite anything if those same dates already exist.
     sample_data = [
         {
             "date": "2026-06-22",
@@ -1005,6 +1012,25 @@ def delete_daily_record(date: str):
         """,
         (date,),
     )
+
+    deleted_count = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return deleted_count
+
+
+def delete_all_daily_records():
+    """
+    Deletes every daily log record. Irreversible -- the frontend gates this
+    behind a stronger, type-to-confirm flow rather than a plain confirm
+    dialog, given how destructive it is compared to a single-day delete.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM daily_logs")
 
     deleted_count = cursor.rowcount
 

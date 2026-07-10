@@ -4,7 +4,7 @@ A local full-stack dashboard for tracking Uber delivery earnings, mileage, time,
 
 The goal is to explain what those earnings actually mean: was the day efficient, was it promo- or tip-carried, and was the mileage/time actually worth it?
 
-**Current version:** v2.5.0
+**Current version:** v3.0.0
 
 ## Tech Stack
 
@@ -16,18 +16,24 @@ The goal is to explain what those earnings actually mean: was the day efficient,
 - Daily log entry (hours, trips, fare, tips, promotions, wallet balance, notes), opened on demand from the Daily logs section
 - Odometer-based mileage tracking and time tracking (online vs. real work time)
 - Selected-day view with earnings breakdown and rule-based labels (e.g. "promo-carried," "strong hourly"), color-coded by outcome
-- Weekly view with day-by-day comparison and week navigation, with smoothly animated bars when switching weeks or selecting a day
-- **Week jump** — date picker and a recent-weeks dropdown (with totals) to jump straight to any week, including empty gap weeks
-- **Earnings composition donut** — a fare/tips/promotions breakdown chart with a legend, for the selected day or the current week
+- Weekly view with day-by-day comparison, animated bars, and week navigation
+- **Week jump** — a date picker to jump straight to any week, including empty gap weeks
+- **Browse weeks** — a visual panel listing every week with its own mini chart and total, for scanning a long history at a glance
+- **Earnings composition donut** — an animated fare/tips/promotions breakdown chart with a legend, for the selected day or the current week
+- **Animated numbers** — key stats count smoothly and flash on change when you switch days or weeks; purely a visual transition cue, not a judgment (wallet figures included, styled the same as everything else)
 - **Wallet balance** featured on the dashboard (most recent logged value), plus **wallet delta** showing day-over-day and week-over-week change — informational only, not color-judged, since a drop can be a cash-out rather than a loss
 - **CSV export** of all daily logs, one click from the Daily logs section
+- **CSV import** for backup/restore — reads only raw input fields and recalculates everything else fresh, with a preview step (new/updated/error counts) before anything is written
+- **Delete all records** — a deliberately out-of-the-way, type-to-confirm action for wiping the database clean (e.g. clearing test data before real use)
 - **Scroll-to-section**: View scrolls to the top of the dashboard, Edit scrolls the form into view, so the UI never leaves you wondering if a click did anything
+- An error boundary shows a readable message instead of a blank screen if something breaks
 - Full CRUD on daily logs (view/edit/delete) via the frontend table
 
 ## Project Structure
 
 ```
 Uber/
+  start.bat            # double-click to launch both servers + open the browser
   backend/
     database.py
     main.py
@@ -51,6 +57,10 @@ Uber/
 ```
 
 ## Run Locally
+
+**Quick start:** double-click `start.bat` in the project root — it launches both servers and opens the app in your browser automatically.
+
+**Manual start**, if you'd rather run things yourself:
 
 **Backend**
 
@@ -80,8 +90,11 @@ GET    /api/daily
 GET    /api/daily/csv
 GET    /api/weeks
 POST   /api/daily
+POST   /api/daily/import/preview
+POST   /api/daily/import/commit
 PUT    /api/daily/{date}
 DELETE /api/daily/{date}
+DELETE /api/daily
 ```
 
 ## Local Database
@@ -108,11 +121,8 @@ It refuses to run over what looks like real accumulated data; pass `--force` to 
 - **v2.3** — Week jump (date picker + recent-weeks dropdown), plus a UI pass: color-coded labels, unified button sizing/coloring across the app, collapsible add/edit form, layout and alignment fixes.
 - **v2.4** — Wallet delta (day-over-day and week-over-week wallet change), plus wallet balance featured on the summary dashboard.
 - **v2.5** — Earnings composition donut chart (replacing the old Net fare/Tips/Promotions cards), scroll-to-section on View/Edit, animated weekly bars on data change, and a UI consistency pass: unified Cancel button placement, consistent form action row layout, colored secondary buttons.
+- **v3.0** — CSV import (backup/restore), Browse weeks (a mini-chart-per-week panel), animated donut chart and animated stat numbers throughout, a delete-all-records safety flow, an error boundary, a one-click startup script, and a project-wide cleanup/comments pass.
 
 ## What's Next
 
-- **CSV import** — restore/merge from a previously exported CSV. Since it's the app's own export format, there's no data-shape guesswork the way there would be with Uber's own PDFs (which don't contain daily-level data and were ruled out for that reason).
-- **Mini-chart-per-week panel** ("Option C") — an extension of the week-jump dropdown showing a small chart per week instead of just a total. The backend (`/api/weeks`) already returns the daily breakdown needed for this.
-- **Animated donut / counting numbers** — a bigger lift than the other animation work: the donut is currently a CSS `conic-gradient`, which browsers can't smoothly transition between states, so animating it would mean rebuilding it as an SVG-based chart. Counting-number transitions also need a real comparison baseline defined first. Worth doing if there's still appetite for it, not a required next step.
-
-Manual backfill of old weeks/months was considered and intentionally skipped — Uber's weekly and tax PDFs only provide week- or month-level totals, not daily figures, so importing them into the day-by-day schema would mean fabricating a breakdown that isn't actually in the source data.
+Nothing planned. The app now covers everything it originally set out to do — daily debrief, weekly comparison, mileage/time economics, wallet awareness, and backup/restore — and the remaining ideas from earlier roadmaps (quest tracker, a fuller spending/cushion tracker, a tax-summary tool) were each considered and deliberately set aside because they either pulled the app outside its role as an end-of-day debrief tool, or the data needed for them didn't actually exist in a usable shape (see: Uber's own PDFs only provide week/month totals, not daily figures).

@@ -71,7 +71,7 @@ body {
 .eyebrow {
   color: var(--accent-text);
   font-weight: 600;
-  font-size: 12px;
+  font-size: 15px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -133,8 +133,9 @@ h1 {
 }
 
 .card p {
-  color: var(--text-muted);
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 600;
   margin: 0 0 6px;
 }
 
@@ -151,6 +152,7 @@ h1 {
 
 .card-featured p {
   color: var(--accent-text);
+  font-weight: 700;
 }
 
 .card-featured h2 {
@@ -603,7 +605,7 @@ button:disabled {
 .weekly-total p {
   color: var(--text-muted);
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: 20px;
 }
 
 .weekly-total h3 {
@@ -639,7 +641,7 @@ button:disabled {
 }
 
 .clickable-weekly-bar:hover .weekly-bar-track {
-  background: var(--bg-surface-2-hover);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .selected-weekly-bar .weekly-bar-track {
@@ -730,14 +732,16 @@ button:disabled {
 
 .weekly-stats p,
 .weekly-breakdown-stats p {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .weekly-stats strong {
-  font-size: 19px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .weekly-breakdown-stats {
@@ -756,16 +760,19 @@ button:disabled {
 }
 
 .weekly-breakdown-stats strong {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
-.weekly-breakdown-stats span {
-  display: block;
-  margin-top: 4px;
-  color: var(--accent-text);
-  font-size: 13px;
-}
+/* NOTE: no generic ".weekly-breakdown-stats span { color: ... }" rule here
+   on purpose. That used to style a percentage sub-text span before the
+   donut chart replaced this section's old cards; left in place, it also
+   caught the AnimatedNumber component's wrapping <span> (Work miles,
+   $/work mile, Miles/trip, Wallet Δ all render through it), overriding
+   their color back to blue right after each flash animation finished. Any
+   span that genuinely needs its own color (e.g. .wallet-delta-subtext) has
+   its own specific rule below instead. */
 
 /* Wallet delta is informational, not a judgment (a drop can be a cash-out,
    not "lost" money) — deliberately neutral gray, not success/danger colors.
@@ -776,6 +783,8 @@ button:disabled {
 }
 
 .weekly-breakdown-stats .wallet-delta-subtext {
+  display: block;
+  margin-top: 4px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -807,8 +816,44 @@ button:disabled {
   width: 96px;
   height: 96px;
   min-width: 96px;
-  border-radius: 50%;
-  transition: background 0.2s ease;
+}
+
+.earnings-donut-svg {
+  width: 100%;
+  height: 100%;
+  /* SVG arcs start at the 3 o'clock position by default; rotating the
+     whole chart -90deg makes them start at 12 o'clock, matching the usual
+     donut/pie chart orientation. */
+  transform: rotate(-90deg);
+}
+
+.donut-track {
+  fill: none;
+  stroke: var(--bg-surface-2);
+  stroke-width: 10;
+}
+
+.donut-arc {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: butt;
+  /* This is the actual animation: transitioning stroke-dasharray and
+     stroke-dashoffset is what lets the arcs sweep smoothly to their new
+     size when the selected day/week changes, unlike the previous
+     conic-gradient approach which browsers can't transition at all. */
+  transition: stroke-dasharray 0.4s ease, stroke-dashoffset 0.4s ease;
+}
+
+.donut-arc-fare {
+  stroke: var(--donut-fare);
+}
+
+.donut-arc-tip {
+  stroke: var(--donut-tip);
+}
+
+.donut-arc-promo {
+  stroke: var(--donut-promo);
 }
 
 .earnings-donut-center {
@@ -823,11 +868,42 @@ button:disabled {
   text-align: center;
 }
 
+/* Animated numbers: a brief flash indicating the displayed number just
+   increased or decreased, purely a transition cue (not a judgment about
+   whether the change itself is good or bad -- applies uniformly, including
+   to wallet figures). Fades back to the surrounding text's own color via
+   `color: inherit`, so it looks right in every context it's used. */
+@keyframes animatedNumberFlashUp {
+  0% {
+    color: var(--success-text);
+  }
+  100% {
+    color: inherit;
+  }
+}
+
+@keyframes animatedNumberFlashDown {
+  0% {
+    color: var(--danger-text);
+  }
+  100% {
+    color: inherit;
+  }
+}
+
+.animated-number-up {
+  animation: animatedNumberFlashUp 0.8s ease-out;
+}
+
+.animated-number-down {
+  animation: animatedNumberFlashDown 0.8s ease-out;
+}
+
 .earnings-donut-center-value {
   font-size: 14px;
   font-weight: 700;
   color: var(--text-primary);
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .earnings-donut-center-label {
@@ -835,6 +911,8 @@ button:disabled {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  line-height: 1;
+  margin-top: 3px;
 }
 
 .earnings-donut-legend {
@@ -973,8 +1051,7 @@ button:disabled {
   margin-top: 10px;
 }
 
-.week-jump-date,
-.week-jump-select {
+.week-jump-date {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 7px 10px;
@@ -986,30 +1063,19 @@ button:disabled {
   cursor: pointer;
 }
 
-.week-jump-date:hover,
-.week-jump-select:hover {
+.week-jump-date:hover {
   color: var(--text-primary);
 }
 
-.week-jump-date:focus,
-.week-jump-select:focus {
+.week-jump-date:focus {
   outline: none;
   border-color: var(--accent);
   color: var(--text-primary);
 }
 
-.week-jump-select {
-  max-width: 220px;
-}
-
 @media (max-width: 700px) {
   .week-jump-controls {
     width: 100%;
-  }
-
-  .week-jump-select {
-    max-width: none;
-    flex: 1;
   }
 }
 
@@ -1174,4 +1240,296 @@ th {
   text-align: center;
   color: var(--text-muted);
   padding: 28px;
+}
+
+/* Delete-all: deliberately understated and separate from the main table
+   header actions (Add/Import/Export), since this is a rare, irreversible
+   "reset" action rather than an everyday one -- it shouldn't sit next to
+   buttons you click all the time. */
+.danger-zone {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.delete-all-trigger {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+}
+
+.delete-all-trigger:hover {
+  color: var(--danger-text);
+  background: transparent;
+}
+
+.delete-all-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1100;
+}
+
+.delete-all-panel {
+  background: var(--bg-surface-1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.delete-all-panel h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--danger-text);
+}
+
+.delete-all-warning {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.delete-all-export-hint {
+  margin: 0 0 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  background: var(--bg-surface-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.delete-all-export-link {
+  color: var(--success-text);
+  font-weight: 600;
+}
+
+.delete-all-confirm-label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 18px;
+}
+
+.delete-all-confirm-label strong {
+  color: var(--text-primary);
+}
+
+.delete-all-confirm-input {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.delete-all-confirm-input:focus {
+  outline: none;
+  border-color: var(--danger-fill);
+}
+
+.delete-all-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.delete-all-actions button {
+  flex: 1;
+}
+
+/* --- Week browser panel (Option C) --- */
+
+.week-browser-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1000;
+}
+
+.week-browser-panel {
+  background: var(--bg-surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 480px;
+  max-height: min(640px, 85vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.week-browser-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.week-browser-panel-header h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.week-browser-close {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-secondary);
+}
+
+.week-browser-close:hover {
+  color: var(--text-primary);
+}
+
+/* Static weekday-letter header (M T W T F S S), aligned above the same 7
+   bar columns every row uses below -- one header serves every week since
+   the backend always returns days in fixed Monday-through-Sunday order. */
+.week-browser-weekday-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--bg-surface-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.week-browser-weekday-header-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.week-browser-weekday-letters {
+  display: flex;
+  gap: 3px;
+}
+
+.week-browser-weekday-letters span {
+  width: 12px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.week-browser-list {
+  overflow-y: auto;
+  padding: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.week-browser-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+}
+
+.week-browser-row:hover {
+  background: var(--bg-surface-2-hover);
+}
+
+.week-browser-row-active {
+  background: var(--accent-bg);
+  border-color: rgba(74, 144, 226, 0.35);
+}
+
+.week-browser-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.week-browser-range {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.week-browser-total {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.week-browser-chart-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.week-browser-mini-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 20px;
+}
+
+.week-browser-mini-bar {
+  width: 12px;
+  min-height: 2px;
+  background: var(--success-fill);
+  border-radius: 2px 2px 0 0;
+}
+
+.week-browser-row-active .week-browser-mini-bar {
+  background: var(--accent);
+}
+
+.week-browser-mini-bar-empty {
+  background: var(--border-strong);
+}
+
+.week-browser-mini-labels {
+  display: flex;
+  gap: 3px;
+}
+
+.week-browser-mini-labels span {
+  width: 12px;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-muted);
 }

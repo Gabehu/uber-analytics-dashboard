@@ -52,6 +52,15 @@ class ImportCommitResult(BaseModel):
     errors: list[ImportError]
 
 
+class DeleteAllRequest(BaseModel):
+    confirmation: str
+
+
+class DeleteAllResult(BaseModel):
+    message: str
+    deleted_count: int
+
+
 class DailyRecordCreate(BaseModel):
     date: str
     online_hours: float

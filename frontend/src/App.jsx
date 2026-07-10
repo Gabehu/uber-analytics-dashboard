@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const API_BASE_URL = "http://127.0.0.1:8000";
@@ -62,6 +62,80 @@ function getLabelVariant(label) {
   return LABEL_VARIANTS[label] || "neutral";
 }
 
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+const ANIMATED_NUMBER_DURATION_MS = 600;
+const ANIMATED_NUMBER_FLASH_MS = 800;
+
+// Counts smoothly from its previous value to a new one whenever `value`
+// changes, and briefly flashes green (increase) or red (decrease) based on
+// the direction of that change -- purely a "this number just moved" visual,
+// not a judgment about whether the change itself was good or bad (e.g. a
+// wallet balance dropping could be a cash-out, not a loss). Skips the
+// animation entirely on first mount so numbers don't count up from zero
+// when the page first loads.
+function AnimatedNumber({ value, format }) {
+  const [displayValue, setDisplayValue] = useState(value);
+  const [flashClass, setFlashClass] = useState("");
+
+  const previousValueRef = useRef(value);
+  const hasMountedRef = useRef(false);
+  const animationFrameRef = useRef(null);
+  const flashTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      previousValueRef.current = value;
+      setDisplayValue(value);
+      return;
+    }
+
+    const startValue = previousValueRef.current;
+    const endValue = value;
+
+    if (startValue === endValue) {
+      return;
+    }
+
+    setFlashClass(endValue > startValue ? "animated-number-up" : "animated-number-down");
+
+    const startTime = performance.now();
+
+    function step(now) {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / ANIMATED_NUMBER_DURATION_MS, 1);
+      const eased = easeOutCubic(t);
+      setDisplayValue(startValue + (endValue - startValue) * eased);
+
+      if (t < 1) {
+        animationFrameRef.current = requestAnimationFrame(step);
+      }
+    }
+
+    animationFrameRef.current = requestAnimationFrame(step);
+    previousValueRef.current = endValue;
+
+    const flashTimeoutId = setTimeout(() => {
+      setFlashClass("");
+    }, ANIMATED_NUMBER_FLASH_MS);
+    flashTimeoutRef.current = flashTimeoutId;
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (flashTimeoutRef.current) {
+        clearTimeout(flashTimeoutRef.current);
+      }
+    };
+  }, [value]);
+
+  return <span className={`animated-number ${flashClass}`}>{format(displayValue)}</span>;
+}
+
 function App() {
   const [summary, setSummary] = useState(null);
   const [dailyRecords, setDailyRecords] = useState([]);
@@ -80,6 +154,7 @@ function App() {
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isWeekBrowserOpen, setIsWeekBrowserOpen] = useState(false);
 
   const formSectionRef = useRef(null);
   const importFileInputRef = useRef(null);
@@ -87,6 +162,9 @@ function App() {
   const [importCsvText, setImportCsvText] = useState(null);
   const [importResult, setImportResult] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
+  const [deleteAllConfirmText, setDeleteAllConfirmText] = useState("");
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
 
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
@@ -135,26 +213,23 @@ function App() {
     return `${(value * 100).toFixed(1)}%`;
   }
 
-  function buildEarningsDonutGradient(fareShare, tipShare, promoShare) {
+  const DONUT_RADIUS = 40;
+  const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
+
+  function buildEarningsDonutArcs(fareShare, tipShare, promoShare) {
     const total = fareShare + tipShare + promoShare;
 
     if (total <= 0) {
-      // No earnings to show a composition for — flat neutral ring.
-      return "var(--bg-surface-2)";
+      // No earnings to show a composition for — all arc lengths are zero,
+      // so only the neutral gray track circle shows through underneath.
+      return { fareLen: 0, tipLen: 0, promoLen: 0 };
     }
 
-    const farePercent = (fareShare / total) * 100;
-    const tipPercent = (tipShare / total) * 100;
-
-    const fareEnd = farePercent;
-    const tipEnd = farePercent + tipPercent;
-
-    return (
-      `conic-gradient(` +
-      `var(--donut-fare) 0% ${fareEnd}%, ` +
-      `var(--donut-tip) ${fareEnd}% ${tipEnd}%, ` +
-      `var(--donut-promo) ${tipEnd}% 100%)`
-    );
+    return {
+      fareLen: (fareShare / total) * DONUT_CIRCUMFERENCE,
+      tipLen: (tipShare / total) * DONUT_CIRCUMFERENCE,
+      promoLen: (promoShare / total) * DONUT_CIRCUMFERENCE,
+    };
   }
 
   function optionalNumber(value) {
@@ -258,18 +333,6 @@ function App() {
     }
 
     return hour * 60 + minute;
-  }
-
-  function formatOptionalCurrency(value) {
-    return value !== null && value !== undefined ? `$${value.toFixed(2)}` : "—";
-  }
-
-  function formatOptionalNumber(value, decimals = 1) {
-    return value !== null && value !== undefined ? value.toFixed(decimals) : "—";
-  }
-
-  function formatOptionalHours(value) {
-    return value !== null && value !== undefined ? formatHoursAndMinutes(value) : "—";
   }
 
   function formatWalletDelta(delta, daysAgo) {
@@ -463,6 +526,12 @@ function App() {
     ? weeks.find((week) => week.week_start === selectedWeekStart)
     : null;
 
+  const donutArcs = buildEarningsDonutArcs(
+    selectedRecordIsInVisibleWeek ? selectedRecord.fare_share : weeklyFareShare,
+    selectedRecordIsInVisibleWeek ? selectedRecord.tip_share : weeklyTipShare,
+    selectedRecordIsInVisibleWeek ? selectedRecord.promo_share : weeklyPromoShare
+  );
+
   const maxWeeklyEarnings =
     weeklyChartData.length > 0
       ? Math.max(...weeklyChartData.map((day) => day.earnings))
@@ -527,11 +596,39 @@ function App() {
     return () => clearTimeout(timerId);
   }, [error, successMessage, importResult]);
 
+  // Deliberately depends on editingDate ONLY, not isFormOpen. Editing a
+  // record scrolls the form into view since it can be anywhere in a long
+  // table; adding a new one does NOT scroll, since the Add button already
+  // opens the form right where you clicked (in the Daily logs header) --
+  // scrolling there would just move the page for no reason and, worse,
+  // could scroll the Cancel button out of view right after you opened the
+  // form. If isFormOpen gets added back to this dependency array "for
+  // consistency," that regression comes back too.
   useEffect(() => {
     if (editingDate && formSectionRef.current) {
       formSectionRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [editingDate]);
+
+  useEffect(() => {
+    if (!isWeekBrowserOpen) {
+      return;
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsWeekBrowserOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isWeekBrowserOpen]);
+
+  function handleBrowseWeekSelect(weekStartString) {
+    jumpToWeekStart(weekStartString);
+    setIsWeekBrowserOpen(false);
+  }
 
   function handleInputChange(event) {
     const { name, value } = event.target;
@@ -955,10 +1052,53 @@ function App() {
     }
   }
 
+  function handleOpenDeleteAll() {
+    setIsDeleteAllOpen(true);
+    setDeleteAllConfirmText("");
+  }
+
+  function handleCancelDeleteAll() {
+    setIsDeleteAllOpen(false);
+    setDeleteAllConfirmText("");
+  }
+
+  async function handleConfirmDeleteAll() {
+    if (deleteAllConfirmText !== "DELETE") {
+      return;
+    }
+
+    setIsDeletingAll(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/daily`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: deleteAllConfirmText }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to delete all records.");
+      }
+
+      const result = await response.json();
+      setIsDeleteAllOpen(false);
+      setDeleteAllConfirmText("");
+      setSelectedRecordDate(null);
+      setSuccessMessage(`Deleted ${result.deleted_count} daily record${result.deleted_count === 1 ? "" : "s"}.`);
+      await fetchDashboardData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsDeletingAll(false);
+    }
+  }
+
   return (
     <main className="app">
       <section className="hero">
-        <p className="eyebrow">Uber Dashboard v2.1</p>
+        <p className="eyebrow">Uber Dashboard v3.0</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -971,7 +1111,12 @@ function App() {
             <p>Wallet balance</p>
             {summary.current_wallet_balance !== null ? (
               <>
-                <h2>${summary.current_wallet_balance.toFixed(2)}</h2>
+                <h2>
+                  <AnimatedNumber
+                    value={summary.current_wallet_balance}
+                    format={(v) => `$${v.toFixed(2)}`}
+                  />
+                </h2>
                 <span className="card-caption">
                   as of {formatShortDate(new Date(`${summary.current_wallet_as_of}T00:00:00`))}
                 </span>
@@ -1055,22 +1200,13 @@ function App() {
                 />
 
                 {weeks.length > 0 && (
-                  <select
-                    className="week-jump-select"
-                    aria-label="Jump to a recent week"
-                    value={selectedWeekStart || ""}
-                    onChange={(event) => jumpToWeekStart(event.target.value)}
+                  <button
+                    type="button"
+                    className="latest-week-button"
+                    onClick={() => setIsWeekBrowserOpen(true)}
                   >
-                    <option value="" disabled>
-                      Jump to week…
-                    </option>
-                    {weeks.map((week) => (
-                      <option key={week.week_start} value={week.week_start}>
-                        {formatWeekRangeLabel(week.week_start, week.week_end)} · $
-                        {week.total_earnings.toFixed(2)}
-                      </option>
-                    ))}
-                  </select>
+                    Browse weeks
+                  </button>
                 )}
               </div>
             </div>
@@ -1078,10 +1214,14 @@ function App() {
             <div className="weekly-total">
               <p>{selectedRecordIsInVisibleWeek ? "Day total" : "Week total"}</p>
               <h3>
-                $
-                {selectedRecordIsInVisibleWeek
-                  ? selectedRecord.total_earnings.toFixed(2)
-                  : weeklyTotalEarnings.toFixed(2)}
+                <AnimatedNumber
+                  value={
+                    selectedRecordIsInVisibleWeek
+                      ? selectedRecord.total_earnings
+                      : weeklyTotalEarnings
+                  }
+                  format={(v) => `$${v.toFixed(2)}`}
+                />
               </h3>
             </div>
           </div>
@@ -1099,6 +1239,16 @@ function App() {
                   className={`weekly-bar-item ${
                     selectedRecord?.date === day.date ? "selected-weekly-bar" : ""
                   } ${day.hasRecord ? "clickable-weekly-bar" : ""}`}
+                  // Deliberately using the array index as the key, not
+                  // day.date. This list always has exactly 7 fixed
+                  // positions (Mon..Sun) that never reorder, so index is
+                  // safe here -- and it's required for the bar-height CSS
+                  // transition to work at all. If keyed by date instead,
+                  // React would remount fresh bars every time the week
+                  // changes (different dates = different keys), so the
+                  // "height" CSS property would never see a change on an
+                  // existing element to animate -- it'd just appear already
+                  // at its final value, with no transition to show.
                   key={index}
                   onClick={() => handleWeeklyBarClick(day)}
                   disabled={!day.hasRecord}
@@ -1127,70 +1277,119 @@ function App() {
             <div>
               <p>Online</p>
               <strong>
-                {selectedRecordIsInVisibleWeek
-                  ? formatHoursAndMinutes(selectedRecord.online_hours)
-                  : formatHoursAndMinutes(weeklyTotalHours)}
+                <AnimatedNumber
+                  value={selectedRecordIsInVisibleWeek ? selectedRecord.online_hours : weeklyTotalHours}
+                  format={formatHoursAndMinutes}
+                />
               </strong>
             </div>
 
             <div>
               <p>Real work</p>
               <strong>
-                {selectedRecordIsInVisibleWeek
-                  ? formatOptionalHours(selectedRecord.real_work_hours)
-                  : weeklyRealWorkHours > 0
-                    ? formatHoursAndMinutes(weeklyRealWorkHours)
-                    : "—"}
+                {(() => {
+                  const val = selectedRecordIsInVisibleWeek
+                    ? selectedRecord.real_work_hours
+                    : weeklyRealWorkHours > 0
+                      ? weeklyRealWorkHours
+                      : null;
+                  return val !== null && val !== undefined ? (
+                    <AnimatedNumber value={val} format={formatHoursAndMinutes} />
+                  ) : (
+                    "—"
+                  );
+                })()}
               </strong>
             </div>
 
             <div>
               <p>Trips</p>
               <strong>
-                {selectedRecordIsInVisibleWeek
-                  ? selectedRecord.trips
-                  : weeklyTotalTrips}
+                <AnimatedNumber
+                  value={selectedRecordIsInVisibleWeek ? selectedRecord.trips : weeklyTotalTrips}
+                  format={(v) => Math.round(v)}
+                />
               </strong>
             </div>
 
             <div>
               <p>Online $/hr</p>
               <strong>
-                $
-                {selectedRecordIsInVisibleWeek
-                  ? selectedRecord.avg_hourly.toFixed(2)
-                  : weeklyAverageHourly.toFixed(2)}
+                <AnimatedNumber
+                  value={selectedRecordIsInVisibleWeek ? selectedRecord.avg_hourly : weeklyAverageHourly}
+                  format={(v) => `$${v.toFixed(2)}`}
+                />
               </strong>
             </div>
 
             <div>
               <p>Real $/hr</p>
               <strong>
-                {selectedRecordIsInVisibleWeek
-                  ? formatOptionalCurrency(selectedRecord.earnings_per_real_work_hour)
-                  : formatOptionalCurrency(weeklyEarningsPerRealHour)}
+                {(selectedRecordIsInVisibleWeek
+                  ? selectedRecord.earnings_per_real_work_hour
+                  : weeklyEarningsPerRealHour) !== null ? (
+                  <AnimatedNumber
+                    value={
+                      selectedRecordIsInVisibleWeek
+                        ? selectedRecord.earnings_per_real_work_hour
+                        : weeklyEarningsPerRealHour
+                    }
+                    format={(v) => `$${v.toFixed(2)}`}
+                  />
+                ) : (
+                  "—"
+                )}
               </strong>
             </div>
           </div>
 
           <div className="earnings-composition-row">
             <div className="earnings-donut-block">
-              <div
-                className="earnings-donut"
-                style={{
-                  background: buildEarningsDonutGradient(
-                    selectedRecordIsInVisibleWeek ? selectedRecord.fare_share : weeklyFareShare,
-                    selectedRecordIsInVisibleWeek ? selectedRecord.tip_share : weeklyTipShare,
-                    selectedRecordIsInVisibleWeek ? selectedRecord.promo_share : weeklyPromoShare
-                  ),
-                }}
-              >
+              <div className="earnings-donut">
+                <svg viewBox="0 0 100 100" className="earnings-donut-svg">
+                  <circle className="donut-track" cx="50" cy="50" r={DONUT_RADIUS} />
+                  <circle
+                    className="donut-arc donut-arc-fare"
+                    cx="50"
+                    cy="50"
+                    r={DONUT_RADIUS}
+                    style={{
+                      strokeDasharray: `${donutArcs.fareLen} ${DONUT_CIRCUMFERENCE - donutArcs.fareLen}`,
+                      strokeDashoffset: 0,
+                    }}
+                  />
+                  <circle
+                    className="donut-arc donut-arc-tip"
+                    cx="50"
+                    cy="50"
+                    r={DONUT_RADIUS}
+                    style={{
+                      strokeDasharray: `${donutArcs.tipLen} ${DONUT_CIRCUMFERENCE - donutArcs.tipLen}`,
+                      strokeDashoffset: -donutArcs.fareLen,
+                    }}
+                  />
+                  <circle
+                    className="donut-arc donut-arc-promo"
+                    cx="50"
+                    cy="50"
+                    r={DONUT_RADIUS}
+                    style={{
+                      strokeDasharray: `${donutArcs.promoLen} ${DONUT_CIRCUMFERENCE - donutArcs.promoLen}`,
+                      strokeDashoffset: -(donutArcs.fareLen + donutArcs.tipLen),
+                    }}
+                  />
+                </svg>
+
                 <div className="earnings-donut-center">
                   <span className="earnings-donut-center-value">
-                    $
-                    {selectedRecordIsInVisibleWeek
-                      ? selectedRecord.total_earnings.toFixed(2)
-                      : weeklyTotalEarnings.toFixed(2)}
+                    <AnimatedNumber
+                      value={
+                        selectedRecordIsInVisibleWeek
+                          ? selectedRecord.total_earnings
+                          : weeklyTotalEarnings
+                      }
+                      format={(v) => `$${v.toFixed(2)}`}
+                    />
                   </span>
                   <span className="earnings-donut-center-label">Total</span>
                 </div>
@@ -1203,15 +1402,16 @@ function App() {
                     <span className="legend-label">Net fare</span>
                   </span>
                   <strong>
-                    $
-                    {selectedRecordIsInVisibleWeek
-                      ? selectedRecord.net_fare.toFixed(2)
-                      : weeklyNetFare.toFixed(2)}
+                    <AnimatedNumber
+                      value={selectedRecordIsInVisibleWeek ? selectedRecord.net_fare : weeklyNetFare}
+                      format={(v) => `$${v.toFixed(2)}`}
+                    />
                   </strong>
                   <span className="legend-percent legend-percent-fare">
-                    {selectedRecordIsInVisibleWeek
-                      ? formatPercent(selectedRecord.fare_share)
-                      : formatPercent(weeklyFareShare)}
+                    <AnimatedNumber
+                      value={selectedRecordIsInVisibleWeek ? selectedRecord.fare_share : weeklyFareShare}
+                      format={formatPercent}
+                    />
                   </span>
                 </li>
 
@@ -1221,15 +1421,16 @@ function App() {
                     <span className="legend-label">Tips</span>
                   </span>
                   <strong>
-                    $
-                    {selectedRecordIsInVisibleWeek
-                      ? selectedRecord.tips.toFixed(2)
-                      : weeklyTips.toFixed(2)}
+                    <AnimatedNumber
+                      value={selectedRecordIsInVisibleWeek ? selectedRecord.tips : weeklyTips}
+                      format={(v) => `$${v.toFixed(2)}`}
+                    />
                   </strong>
                   <span className="legend-percent legend-percent-tip">
-                    {selectedRecordIsInVisibleWeek
-                      ? formatPercent(selectedRecord.tip_share)
-                      : formatPercent(weeklyTipShare)}
+                    <AnimatedNumber
+                      value={selectedRecordIsInVisibleWeek ? selectedRecord.tip_share : weeklyTipShare}
+                      format={formatPercent}
+                    />
                   </span>
                 </li>
 
@@ -1239,15 +1440,16 @@ function App() {
                     <span className="legend-label">Promotions</span>
                   </span>
                   <strong>
-                    $
-                    {selectedRecordIsInVisibleWeek
-                      ? selectedRecord.promotions.toFixed(2)
-                      : weeklyPromotions.toFixed(2)}
+                    <AnimatedNumber
+                      value={selectedRecordIsInVisibleWeek ? selectedRecord.promotions : weeklyPromotions}
+                      format={(v) => `$${v.toFixed(2)}`}
+                    />
                   </strong>
                   <span className="legend-percent legend-percent-promo">
-                    {selectedRecordIsInVisibleWeek
-                      ? formatPercent(selectedRecord.promo_share)
-                      : formatPercent(weeklyPromoShare)}
+                    <AnimatedNumber
+                      value={selectedRecordIsInVisibleWeek ? selectedRecord.promo_share : weeklyPromoShare}
+                      format={formatPercent}
+                    />
                   </span>
                 </li>
               </ul>
@@ -1257,44 +1459,73 @@ function App() {
               <div>
                 <p>Work miles</p>
                 <strong>
-                  {selectedRecordIsInVisibleWeek
-                    ? formatOptionalNumber(selectedRecord.work_miles)
-                    : weeklyWorkMiles > 0
-                      ? weeklyWorkMiles.toFixed(1)
-                      : "—"}
+                  {(() => {
+                    const val = selectedRecordIsInVisibleWeek
+                      ? selectedRecord.work_miles
+                      : weeklyWorkMiles > 0
+                        ? weeklyWorkMiles
+                        : null;
+                    return val !== null ? (
+                      <AnimatedNumber value={val} format={(v) => v.toFixed(1)} />
+                    ) : (
+                      "—"
+                    );
+                  })()}
                 </strong>
               </div>
 
               <div>
                 <p>$/work mile</p>
                 <strong>
-                  {selectedRecordIsInVisibleWeek
-                    ? formatOptionalCurrency(selectedRecord.earnings_per_work_mile)
-                    : formatOptionalCurrency(weeklyEarningsPerWorkMile)}
+                  {(() => {
+                    const val = selectedRecordIsInVisibleWeek
+                      ? selectedRecord.earnings_per_work_mile
+                      : weeklyEarningsPerWorkMile;
+                    return val !== null && val !== undefined ? (
+                      <AnimatedNumber value={val} format={(v) => `$${v.toFixed(2)}`} />
+                    ) : (
+                      "—"
+                    );
+                  })()}
                 </strong>
               </div>
 
               <div>
                 <p>Miles/trip</p>
                 <strong>
-                  {selectedRecordIsInVisibleWeek
-                    ? formatOptionalNumber(selectedRecord.miles_per_trip)
-                    : weeklyTotalTrips > 0 && weeklyWorkMiles > 0
-                      ? (weeklyWorkMiles / weeklyTotalTrips).toFixed(1)
-                      : "—"}
+                  {(() => {
+                    const val = selectedRecordIsInVisibleWeek
+                      ? selectedRecord.miles_per_trip
+                      : weeklyTotalTrips > 0 && weeklyWorkMiles > 0
+                        ? weeklyWorkMiles / weeklyTotalTrips
+                        : null;
+                    return val !== null ? (
+                      <AnimatedNumber value={val} format={(v) => v.toFixed(1)} />
+                    ) : (
+                      "—"
+                    );
+                  })()}
                 </strong>
               </div>
 
               <div>
                 <p>Wallet Δ</p>
                 <strong className="wallet-delta-text">
-                  {selectedRecordIsInVisibleWeek
-                    ? (selectedRecord.wallet_delta !== null
-                        ? `${selectedRecord.wallet_delta >= 0 ? "+" : "−"}$${Math.abs(selectedRecord.wallet_delta).toFixed(2)}`
-                        : "—")
-                    : (currentWeekData && currentWeekData.wallet_delta !== null
-                        ? `${currentWeekData.wallet_delta >= 0 ? "+" : "−"}$${Math.abs(currentWeekData.wallet_delta).toFixed(2)}`
-                        : "—")}
+                  {(() => {
+                    const val = selectedRecordIsInVisibleWeek
+                      ? selectedRecord.wallet_delta
+                      : currentWeekData
+                        ? currentWeekData.wallet_delta
+                        : null;
+                    return val !== null && val !== undefined ? (
+                      <AnimatedNumber
+                        value={val}
+                        format={(v) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`}
+                      />
+                    ) : (
+                      "—"
+                    );
+                  })()}
                 </strong>
                 <span className="wallet-delta-subtext">
                   {selectedRecordIsInVisibleWeek
@@ -1304,10 +1535,10 @@ function App() {
                             : selectedRecord.wallet_delta_days_ago === 1
                               ? "vs 1 day ago"
                               : `vs ${selectedRecord.wallet_delta_days_ago} days ago`)
-                        : "")
+                        : "Wallet not logged")
                     : (currentWeekData && currentWeekData.wallet_delta !== null
                         ? `${formatShortDate(new Date(`${currentWeekData.wallet_delta_start_date}T00:00:00`))} → ${formatShortDate(new Date(`${currentWeekData.wallet_delta_end_date}T00:00:00`))}`
-                      : "")}
+                      : "Wallet not logged")}
               </span>
             </div>
           </div>
@@ -1810,9 +2041,185 @@ function App() {
             )}
           </tbody>
         </table>
+
+        {dailyRecords.length > 0 && (
+          <div className="danger-zone">
+            <button type="button" className="delete-all-trigger" onClick={handleOpenDeleteAll}>
+              Delete all daily records…
+            </button>
+          </div>
+        )}
       </section>
+
+      {isWeekBrowserOpen && (
+        <div className="week-browser-overlay" onClick={() => setIsWeekBrowserOpen(false)}>
+          <div className="week-browser-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="week-browser-panel-header">
+              <h3>Select week</h3>
+              <button
+                type="button"
+                className="week-browser-close"
+                onClick={() => setIsWeekBrowserOpen(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="week-browser-weekday-header">
+              <span className="week-browser-weekday-header-label">Weekly earnings</span>
+              <div className="week-browser-weekday-letters">
+                {["M", "T", "W", "T", "F", "S", "S"].map((letter, index) => (
+                  <span key={index}>{letter}</span>
+                ))}
+              </div>
+            </div>
+
+            <div className="week-browser-list">
+              {weeks.map((week) => {
+                const maxDayEarnings = Math.max(...week.daily.map((day) => day.earnings), 0);
+                const isActive = week.week_start === selectedWeekStart;
+
+                return (
+                  <button
+                    type="button"
+                    key={week.week_start}
+                    className={`week-browser-row ${isActive ? "week-browser-row-active" : ""}`}
+                    onClick={() => handleBrowseWeekSelect(week.week_start)}
+                  >
+                    <div className="week-browser-row-info">
+                      <span className="week-browser-range">
+                        {formatWeekRangeLabel(week.week_start, week.week_end)}
+                      </span>
+                      <span className="week-browser-total">${week.total_earnings.toFixed(2)}</span>
+                    </div>
+
+                    <div className="week-browser-chart-block">
+                      <div className="week-browser-mini-chart">
+                        {week.daily.map((day) => (
+                          <div
+                            key={day.date}
+                            className={`week-browser-mini-bar ${
+                              day.earnings === 0 ? "week-browser-mini-bar-empty" : ""
+                            }`}
+                            style={{
+                              height: maxDayEarnings > 0 ? `${(day.earnings / maxDayEarnings) * 100}%` : "0%",
+                            }}
+                          ></div>
+                        ))}
+                      </div>
+                      <div className="week-browser-mini-labels">
+                        {week.daily.map((day) => (
+                          <span key={day.date}>{parseInt(day.date.split("-")[2], 10)}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isDeleteAllOpen && (
+        <div className="delete-all-overlay" onClick={handleCancelDeleteAll}>
+          <div className="delete-all-panel" onClick={(event) => event.stopPropagation()}>
+            <h3>Delete all daily records?</h3>
+            <p className="delete-all-warning">
+              This permanently deletes every daily log in your database. There is no undo.
+            </p>
+
+            {dailyRecords.length > 0 && (
+              <p className="delete-all-export-hint">
+                Consider{" "}
+                <a href={`${API_BASE_URL}/api/daily/csv`} className="delete-all-export-link">
+                  exporting a backup
+                </a>{" "}
+                first if you haven't already.
+              </p>
+            )}
+
+            <label className="delete-all-confirm-label">
+              Type <strong>DELETE</strong> to confirm
+              <input
+                type="text"
+                className="delete-all-confirm-input"
+                value={deleteAllConfirmText}
+                onChange={(event) => setDeleteAllConfirmText(event.target.value)}
+                autoFocus
+                placeholder="DELETE"
+              />
+            </label>
+
+            <div className="delete-all-actions">
+              <button
+                type="button"
+                className="delete-button"
+                disabled={deleteAllConfirmText !== "DELETE" || isDeletingAll}
+                onClick={handleConfirmDeleteAll}
+              >
+                {isDeletingAll ? "Deleting..." : "Delete everything"}
+              </button>
+              <button
+                type="button"
+                className="cancel-edit-button"
+                onClick={handleCancelDeleteAll}
+                disabled={isDeletingAll}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
 
-export default App;
+// React only supports catching render-time errors with a class component
+// (there's no hook equivalent) -- this is a personal, single-user app, so
+// the goal here is modest: replace a blank white screen with a readable
+// message and a hint to check the console, not a polished recovery flow.
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Uber Nest Tracker crashed:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main className="app">
+          <section className="hero">
+            <h1>Something went wrong</h1>
+            <p className="subtitle">
+              The dashboard hit an unexpected error. Check the browser console for
+              details, then try refreshing the page.
+            </p>
+          </section>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+export default AppWithErrorBoundary;

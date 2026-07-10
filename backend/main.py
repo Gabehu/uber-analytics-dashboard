@@ -15,6 +15,7 @@ from database import (
     create_daily_record,
     update_daily_record,
     delete_daily_record,
+    delete_all_daily_records,
 )
 from schemas import (
     Summary,
@@ -24,6 +25,8 @@ from schemas import (
     ImportRequest,
     ImportPreviewResult,
     ImportCommitResult,
+    DeleteAllRequest,
+    DeleteAllResult,
 )
 
 
@@ -36,7 +39,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Uber Dashboard API",
     description="Backend API for Uber Dashboard v2",
-    version="2.6.0",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -144,4 +147,24 @@ def delete_daily(date: str):
     return {
         "message": "Daily record deleted successfully.",
         "date": date
+    }
+
+
+@app.delete("/api/daily", response_model=DeleteAllResult)
+def delete_all_daily(payload: DeleteAllRequest):
+    # The frontend gates this behind a type-to-confirm flow, but that's a UI
+    # convenience, not the real safeguard -- the backend independently
+    # requires the exact confirmation text too, so this can't be triggered
+    # by anything other than the deliberate confirmed action.
+    if payload.confirmation != "DELETE":
+        raise HTTPException(
+            status_code=400,
+            detail='Confirmation text must be exactly "DELETE".'
+        )
+
+    deleted_count = delete_all_daily_records()
+
+    return {
+        "message": "All daily records deleted.",
+        "deleted_count": deleted_count,
     }
