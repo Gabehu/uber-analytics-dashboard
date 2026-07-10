@@ -2,36 +2,62 @@ import { Component, useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const API_BASE_URL = "http://127.0.0.1:8000";
+const DAILY_LOG_PAGE_SIZE_OPTIONS = [10, 25, 50];
 
-function getTodayInputValue() {
-  const today = new Date();
-  return today.toISOString().slice(0, 10);
+const DAILY_LOG_SORT_OPTIONS = [
+  { value: "date-desc", label: "Newest first" },
+  { value: "date-asc", label: "Oldest first" },
+  { value: "total-desc", label: "Highest total" },
+  { value: "total-asc", label: "Lowest total" },
+  { value: "hourly-desc", label: "Highest online $/hr" },
+  { value: "hourly-asc", label: "Lowest online $/hr" },
+  { value: "real-hourly-desc", label: "Highest real $/hr" },
+  { value: "real-hourly-asc", label: "Lowest real $/hr" },
+  { value: "work-mile-desc", label: "Highest $/work mile" },
+  { value: "work-mile-asc", label: "Lowest $/work mile" },
+  { value: "trips-desc", label: "Most trips" },
+  { value: "trips-asc", label: "Fewest trips" },
+];
+
+
+function toLocalInputDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
-const emptyForm = {
-  date: getTodayInputValue(),
-  online_hours: "",
-  trips: "",
-  net_fare: "",
-  tips: "",
-  promotions: "",
+function getTodayInputValue() {
+  return toLocalInputDate(new Date());
+}
 
-  start_odometer: "",
-  end_work_odometer: "",
-  end_home_odometer: "",
+function createEmptyForm(date = getTodayInputValue()) {
+  return {
+    date,
+    online_hours: "",
+    trips: "",
+    net_fare: "",
+    tips: "",
+    promotions: "",
 
-  work_start_time_value: "",
-  work_start_time_meridiem: "PM",
+    start_odometer: "",
+    end_work_odometer: "",
+    end_home_odometer: "",
 
-  uber_stop_time_value: "",
-  uber_stop_time_meridiem: "PM",
+    work_start_time_value: "",
+    work_start_time_meridiem: "PM",
 
-  home_end_time_value: "",
-  home_end_time_meridiem: "PM",
+    uber_stop_time_value: "",
+    uber_stop_time_meridiem: "PM",
 
-  wallet_balance: "",
-  notes: "",
-};
+    home_end_time_value: "",
+    home_end_time_meridiem: "PM",
+
+    wallet_balance: "",
+    notes: "",
+  };
+}
 
 // Maps a rule-based label to a color meaning, so the UI can encode
 // good/mixed/weak days at a glance instead of using one flat color everywhere.
@@ -60,6 +86,156 @@ const LABEL_VARIANTS = {
 
 function getLabelVariant(label) {
   return LABEL_VARIANTS[label] || "neutral";
+}
+
+
+function formatTooltipCurrency(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "not available";
+  }
+
+  return `$${Number(value).toFixed(2)}`;
+}
+
+function formatTooltipNumber(value, decimals = 1) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "not available";
+  }
+
+  return Number(value).toFixed(decimals);
+}
+
+function formatTooltipPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "not available";
+  }
+
+  return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function getRecordShare(record, fieldName, shareFieldName) {
+  if (!record) {
+    return null;
+  }
+
+  if (record[shareFieldName] !== null && record[shareFieldName] !== undefined) {
+    return record[shareFieldName];
+  }
+
+  if (!record.total_earnings || record.total_earnings <= 0) {
+    return null;
+  }
+
+  return (record[fieldName] || 0) / record.total_earnings;
+}
+
+function getStatusTooltip(label, record) {
+  const onlineHourly = record ? formatTooltipCurrency(record.avg_hourly) : "not available";
+  const promoAmount = record ? formatTooltipCurrency(record.promotions) : "not available";
+  const promoShare = formatTooltipPercent(getRecordShare(record, "promotions", "promo_share"));
+  const tipAmount = record ? formatTooltipCurrency(record.tips) : "not available";
+  const tipShare = formatTooltipPercent(getRecordShare(record, "tips", "tip_share"));
+  const workMiles = record ? formatTooltipNumber(record.work_miles, 1) : "not available";
+  const perWorkMile = record ? formatTooltipCurrency(record.earnings_per_work_mile) : "not available";
+  const milesPerTrip = record ? formatTooltipNumber(record.miles_per_trip, 1) : "not available";
+
+  const tooltips = {
+    "Strong hourly": {
+      metric: `Online $/hr: ${onlineHourly}`,
+      body: "This day landed in the strongest hourly bucket based on earnings divided by online hours.",
+    },
+    "Good hourly": {
+      metric: `Online $/hr: ${onlineHourly}`,
+      body: "This day cleared the good hourly range, but did not reach the strongest bucket.",
+    },
+    "Acceptable hourly": {
+      metric: `Online $/hr: ${onlineHourly}`,
+      body: "This day was workable, but the hourly rate was not high enough to count as good.",
+    },
+    "Weak hourly": {
+      metric: `Online $/hr: ${onlineHourly}`,
+      body: "This day fell below the target hourly range.",
+    },
+    "Bad hourly": {
+      metric: `Online $/hr: ${onlineHourly}`,
+      body: "This day had a very low return for the amount of online time logged.",
+    },
+
+    "Organic earnings": {
+      metric: `Promotions: ${promoAmount} (${promoShare})`,
+      body: "Most of this day came from fare and tips rather than promotion money.",
+    },
+    "Promo helped": {
+      metric: `Promotions: ${promoAmount} (${promoShare})`,
+      body: "Promotions gave the day a meaningful boost, but they were not the main source of earnings.",
+    },
+    "Promo-carried": {
+      metric: `Promotions: ${promoAmount} (${promoShare})`,
+      body: "A large share of this day came from promotions, so the day was heavily dependent on promo money.",
+    },
+
+    "Tip-carried": {
+      metric: `Tips: ${tipAmount} (${tipShare})`,
+      body: "Tips made up a very large share of this day's earnings.",
+    },
+    "Solid tips": {
+      metric: `Tips: ${tipAmount} (${tipShare})`,
+      body: "Tips were a strong part of the total without fully carrying the day.",
+    },
+    "Normal tips": {
+      metric: `Tips: ${tipAmount} (${tipShare})`,
+      body: "Tip share looked normal for this entry.",
+    },
+    "Weak tips": {
+      metric: `Tips: ${tipAmount} (${tipShare})`,
+      body: "Tips were a low share of this day's earnings.",
+    },
+
+    "Strong mileage": {
+      metric: `$/work mile: ${perWorkMile} · Work miles: ${workMiles} · Miles/trip: ${milesPerTrip}`,
+      body: "Mileage efficiency was strong based on earnings per work mile.",
+    },
+    "Solid mileage": {
+      metric: `$/work mile: ${perWorkMile} · Work miles: ${workMiles} · Miles/trip: ${milesPerTrip}`,
+      body: "Mileage efficiency was decent and stayed within a reasonable range.",
+    },
+    "Questionable mileage": {
+      metric: `$/work mile: ${perWorkMile} · Work miles: ${workMiles} · Miles/trip: ${milesPerTrip}`,
+      body: "Mileage efficiency was borderline and worth checking against the route/shift details.",
+    },
+    "Weak mileage": {
+      metric: `$/work mile: ${perWorkMile} · Work miles: ${workMiles} · Miles/trip: ${milesPerTrip}`,
+      body: "Mileage efficiency was weak, meaning the day required too many work miles for the earnings.",
+    },
+    "Mileage not logged": {
+      metric: "Odometer/work-mile fields are missing.",
+      body: "The app cannot calculate mileage efficiency for this entry until mileage data is logged.",
+    },
+  };
+
+  return (
+    tooltips[label] || {
+      metric: "Rule details not available.",
+      body: "This status was generated from the daily log metrics.",
+    }
+  );
+}
+
+function LabelChip({ label, record }) {
+  const tooltip = getStatusTooltip(label, record);
+
+  return (
+    <span className="label-tooltip-wrap">
+      <span className={`label-chip label-${getLabelVariant(label)}`} tabIndex="0">
+        {label}
+      </span>
+      <span className="label-tooltip" role="tooltip">
+        <strong className="label-tooltip-title">{label}</strong>
+        <span className="label-tooltip-body">{tooltip.body}</span>
+        <span className="label-tooltip-metric">{tooltip.metric}</span>
+      </span>
+    </span>
+  );
 }
 
 function easeOutCubic(t) {
@@ -147,7 +323,7 @@ function App() {
     dailyRecords.find((record) => record.date === selectedRecordDate) || null;
 
   const [selectedWeekStart, setSelectedWeekStart] = useState(null);
-  const [formData, setFormData] = useState(emptyForm);
+  const [formData, setFormData] = useState(() => createEmptyForm());
   const [showAdvancedTracking, setShowAdvancedTracking] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingDate, setEditingDate] = useState(null);
@@ -155,6 +331,13 @@ function App() {
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isWeekBrowserOpen, setIsWeekBrowserOpen] = useState(false);
+  const [dailyLogPage, setDailyLogPage] = useState(1);
+  const [dailyLogPageSize, setDailyLogPageSize] = useState(10);
+  const [dailyLogSort, setDailyLogSort] = useState("date-desc");
+  const [dailyLogStatusFilter, setDailyLogStatusFilter] = useState("all");
+  const [dailyLogMonthFilter, setDailyLogMonthFilter] = useState("all");
+  const [dailyLogWalletFilter, setDailyLogWalletFilter] = useState("all");
+  const [isDailyLogToolsOpen, setIsDailyLogToolsOpen] = useState(false);
 
   const formSectionRef = useRef(null);
   const importFileInputRef = useRef(null);
@@ -178,7 +361,7 @@ function App() {
   }
 
   function formatDateForInput(date) {
-    return date.toISOString().slice(0, 10);
+    return toLocalInputDate(date);
   }
 
   function formatShortDate(date) {
@@ -207,6 +390,68 @@ function App() {
     }
 
     return `${wholeHours}h ${minutes}m`;
+  }
+
+  // The Online hours field lets you type "3.59" to mean 3 hours 59 minutes
+  // (like a clock), rather than requiring the math to convert 59 minutes
+  // into a decimal fraction of an hour yourself. Internally, everywhere
+  // else in the app (storage, calculations, avg $/hr, etc.) still uses
+  // true decimal hours -- this conversion happens only at the form
+  // boundary: hhmmToDecimalHours() runs right before submitting, and
+  // decimalHoursToHHMM() runs when populating the form for editing, so an
+  // existing record redisplays in the same H.MM format it was entered in.
+  function hhmmToDecimalHours(input) {
+    const trimmed = String(input).trim();
+
+    if (trimmed === "") {
+      return { decimalHours: null };
+    }
+
+    const isNegative = trimmed.startsWith("-");
+    const unsigned = isNegative ? trimmed.slice(1) : trimmed;
+    const parts = unsigned.split(".");
+
+    const hoursPart = parts[0] === "" ? 0 : parseInt(parts[0], 10);
+    if (Number.isNaN(hoursPart)) {
+      return { error: "That doesn't look like a valid number." };
+    }
+
+    let minutesPart = 0;
+    if (parts.length > 1) {
+      const digits = parts[1];
+      if (digits.length === 1) {
+        // Standard decimal padding: .5 means .50, so treat "3.5" as 3h 50m,
+        // not 3h 5m -- matches how decimals normally work (0.5 === 0.50).
+        minutesPart = parseInt(digits, 10) * 10;
+      } else {
+        minutesPart = parseInt(digits.slice(0, 2), 10);
+      }
+    }
+
+    if (Number.isNaN(minutesPart)) {
+      return { error: "That doesn't look like a valid number." };
+    }
+
+    if (minutesPart >= 60) {
+      return {
+        error: `Minutes portion must be less than 60 (you entered .${parts[1]}). Did you mean ${hoursPart + 1}.00?`,
+      };
+    }
+
+    const decimalHours = hoursPart + minutesPart / 60;
+    return { decimalHours: isNegative ? -decimalHours : decimalHours };
+  }
+
+  function decimalHoursToHHMM(decimalHours) {
+    if (decimalHours === null || decimalHours === undefined) {
+      return "";
+    }
+
+    const totalMinutes = Math.round(decimalHours * 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    return `${hours}.${String(minutes).padStart(2, "0")}`;
   }
 
   function formatPercent(value) {
@@ -352,16 +597,17 @@ function App() {
   }
 
   function handleWeeklyBarClick(day) {
-    if (!day.hasRecord) {
-      return;
-    }
-
     if (selectedRecordDate === day.date) {
       setSelectedRecordDate(null);
       return;
     }
 
-    selectRecordAndWeek(day.date);
+    // Blank days are selectable too. That lets the chart become a shortcut
+    // into adding a record for the exact missing date.
+    setSelectedRecordDate(day.date);
+
+    const recordWeekStart = getWeekStart(day.date);
+    setSelectedWeekStart(formatDateForInput(recordWeekStart));
   }
 
   function changeWeek(offsetInDays) {
@@ -448,6 +694,10 @@ function App() {
       })()
     : [];
 
+  const selectedChartDay = selectedRecordDate
+    ? weeklyChartData.find((day) => day.date === selectedRecordDate) || null
+    : null;
+
   const weeklyRecords = latestRecord
     ? dailyRecords.filter((record) =>
         weeklyChartData.some((day) => day.date === record.date)
@@ -475,6 +725,14 @@ function App() {
   const selectedRecordIsInVisibleWeek =
     selectedRecord &&
     weeklyChartData.some((day) => day.date === selectedRecord.date);
+
+  const selectedEmptyChartDay =
+    selectedChartDay && !selectedChartDay.hasRecord ? selectedChartDay : null;
+
+  const selectedEmptyDayIsInVisibleWeek = Boolean(selectedEmptyChartDay);
+  const isSelectedDayMode = Boolean(
+    selectedRecordIsInVisibleWeek || selectedEmptyDayIsInVisibleWeek
+  );
 
   const weeklyNetFare = weeklyRecords.reduce(
     (total, record) => total + record.net_fare,
@@ -526,10 +784,293 @@ function App() {
     ? weeks.find((week) => week.week_start === selectedWeekStart)
     : null;
 
+  const displayedTotalEarnings = selectedRecordIsInVisibleWeek
+    ? selectedRecord.total_earnings
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyTotalEarnings;
+
+  const displayedOnlineHours = selectedRecordIsInVisibleWeek
+    ? selectedRecord.online_hours
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyTotalHours;
+
+  const displayedRealWorkHours = selectedRecordIsInVisibleWeek
+    ? selectedRecord.real_work_hours
+    : selectedEmptyDayIsInVisibleWeek
+      ? null
+      : weeklyRealWorkHours > 0
+        ? weeklyRealWorkHours
+        : null;
+
+  const displayedTrips = selectedRecordIsInVisibleWeek
+    ? selectedRecord.trips
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyTotalTrips;
+
+  const displayedAverageHourly = selectedRecordIsInVisibleWeek
+    ? selectedRecord.avg_hourly
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyAverageHourly;
+
+  const displayedEarningsPerRealHour = selectedRecordIsInVisibleWeek
+    ? selectedRecord.earnings_per_real_work_hour
+    : selectedEmptyDayIsInVisibleWeek
+      ? null
+      : weeklyEarningsPerRealHour;
+
+  const displayedNetFare = selectedRecordIsInVisibleWeek
+    ? selectedRecord.net_fare
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyNetFare;
+
+  const displayedTips = selectedRecordIsInVisibleWeek
+    ? selectedRecord.tips
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyTips;
+
+  const displayedPromotions = selectedRecordIsInVisibleWeek
+    ? selectedRecord.promotions
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyPromotions;
+
+  const displayedFareShare = selectedRecordIsInVisibleWeek
+    ? selectedRecord.fare_share
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyFareShare;
+
+  const displayedTipShare = selectedRecordIsInVisibleWeek
+    ? selectedRecord.tip_share
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyTipShare;
+
+  const displayedPromoShare = selectedRecordIsInVisibleWeek
+    ? selectedRecord.promo_share
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyPromoShare;
+
+  const displayedWorkMiles = selectedRecordIsInVisibleWeek
+    ? selectedRecord.work_miles
+    : selectedEmptyDayIsInVisibleWeek
+      ? null
+      : weeklyWorkMiles > 0
+        ? weeklyWorkMiles
+        : null;
+
+  const displayedEarningsPerWorkMile = selectedRecordIsInVisibleWeek
+    ? selectedRecord.earnings_per_work_mile
+    : selectedEmptyDayIsInVisibleWeek
+      ? null
+      : weeklyEarningsPerWorkMile;
+
+  const displayedMilesPerTrip = selectedRecordIsInVisibleWeek
+    ? selectedRecord.miles_per_trip
+    : selectedEmptyDayIsInVisibleWeek
+      ? null
+      : weeklyTotalTrips > 0 && weeklyWorkMiles > 0
+        ? weeklyWorkMiles / weeklyTotalTrips
+        : null;
+
+  const displayedWalletDelta = selectedRecordIsInVisibleWeek
+    ? selectedRecord.wallet_delta
+    : selectedEmptyDayIsInVisibleWeek
+      ? null
+      : currentWeekData
+        ? currentWeekData.wallet_delta
+        : null;
+
+  const displayedWalletDeltaSubtext = selectedRecordIsInVisibleWeek
+    ? selectedRecord.wallet_delta !== null
+      ? selectedRecord.wallet_delta_days_ago === 0
+        ? "same day logged"
+        : selectedRecord.wallet_delta_days_ago === 1
+          ? "vs 1 day ago"
+          : `vs ${selectedRecord.wallet_delta_days_ago} days ago`
+      : "Wallet not logged"
+    : selectedEmptyDayIsInVisibleWeek
+      ? "No log yet"
+      : currentWeekData && currentWeekData.wallet_delta !== null
+        ? `${formatShortDate(new Date(`${currentWeekData.wallet_delta_start_date}T00:00:00`))} → ${formatShortDate(new Date(`${currentWeekData.wallet_delta_end_date}T00:00:00`))}`
+        : "Wallet not logged";
+
   const donutArcs = buildEarningsDonutArcs(
-    selectedRecordIsInVisibleWeek ? selectedRecord.fare_share : weeklyFareShare,
-    selectedRecordIsInVisibleWeek ? selectedRecord.tip_share : weeklyTipShare,
-    selectedRecordIsInVisibleWeek ? selectedRecord.promo_share : weeklyPromoShare
+    displayedFareShare,
+    displayedTipShare,
+    displayedPromoShare
+  );
+
+  const dailyLogMonthOptions = Array.from(
+    new Set(dailyRecords.map((record) => record.date.slice(0, 7)))
+  ).map((monthValue) => {
+    const monthDate = new Date(`${monthValue}-01T00:00:00`);
+
+    return {
+      value: monthValue,
+      label: monthDate.toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric",
+      }),
+    };
+  });
+
+  const dailyLogStatusOptions = Array.from(
+    new Set(
+      dailyRecords.flatMap((record) => [
+        record.hourly_label,
+        record.promo_label,
+        record.mileage_label,
+      ])
+    )
+  )
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  function getRecordStatusLabels(record) {
+    return [record.hourly_label, record.promo_label, record.mileage_label].filter(Boolean);
+  }
+
+  function getRecordWorkMileValue(record) {
+    return record.earnings_per_work_mile !== null && record.earnings_per_work_mile !== undefined
+      ? record.earnings_per_work_mile
+      : record.earnings_per_mile !== null && record.earnings_per_mile !== undefined
+        ? record.earnings_per_mile
+        : null;
+  }
+
+  function getDailyLogSortValue(record, sortKey) {
+    switch (sortKey) {
+      case "date-desc":
+      case "date-asc":
+        return record.date;
+      case "total-desc":
+      case "total-asc":
+        return record.total_earnings;
+      case "hourly-desc":
+      case "hourly-asc":
+        return record.avg_hourly;
+      case "real-hourly-desc":
+      case "real-hourly-asc":
+        return record.earnings_per_real_work_hour;
+      case "work-mile-desc":
+      case "work-mile-asc":
+        return getRecordWorkMileValue(record);
+      case "trips-desc":
+      case "trips-asc":
+        return record.trips;
+      default:
+        return record.date;
+    }
+  }
+
+  function compareNullableValues(aValue, bValue, direction) {
+    const aIsMissing = aValue === null || aValue === undefined || Number.isNaN(aValue);
+    const bIsMissing = bValue === null || bValue === undefined || Number.isNaN(bValue);
+
+    // Missing values always go last, regardless of ascending/descending.
+    // A day without real-time or mileage data should not beat a logged day.
+    if (aIsMissing && bIsMissing) {
+      return 0;
+    }
+
+    if (aIsMissing) {
+      return 1;
+    }
+
+    if (bIsMissing) {
+      return -1;
+    }
+
+    if (typeof aValue === "string" && typeof bValue === "string") {
+      return direction === "asc"
+        ? aValue.localeCompare(bValue)
+        : bValue.localeCompare(aValue);
+    }
+
+    return direction === "asc" ? aValue - bValue : bValue - aValue;
+  }
+
+  const filteredDailyRecords = dailyRecords.filter((record) => {
+    const matchesStatus =
+      dailyLogStatusFilter === "all" ||
+      getRecordStatusLabels(record).includes(dailyLogStatusFilter);
+
+    const matchesMonth =
+      dailyLogMonthFilter === "all" || record.date.startsWith(dailyLogMonthFilter);
+
+    const matchesWallet =
+      dailyLogWalletFilter === "all" ||
+      (dailyLogWalletFilter === "logged" &&
+        record.wallet_balance !== null &&
+        record.wallet_balance !== undefined) ||
+      (dailyLogWalletFilter === "missing" &&
+        (record.wallet_balance === null || record.wallet_balance === undefined));
+
+    return matchesStatus && matchesMonth && matchesWallet;
+  });
+
+  const sortedDailyRecords = [...filteredDailyRecords].sort((a, b) => {
+    const direction = dailyLogSort.endsWith("-asc") ? "asc" : "desc";
+    const aValue = getDailyLogSortValue(a, dailyLogSort);
+    const bValue = getDailyLogSortValue(b, dailyLogSort);
+    const primarySort = compareNullableValues(aValue, bValue, direction);
+
+    if (primarySort !== 0) {
+      return primarySort;
+    }
+
+    // Stable-feeling tie breaker: if two days have the same metric, newer
+    // days appear first instead of looking randomly shuffled.
+    return b.date.localeCompare(a.date);
+  });
+
+  const hasActiveDailyLogFilters =
+    dailyLogStatusFilter !== "all" ||
+    dailyLogMonthFilter !== "all" ||
+    dailyLogWalletFilter !== "all";
+
+  const hasCustomDailyLogTableView =
+    hasActiveDailyLogFilters || dailyLogSort !== "date-desc";
+
+  const activeDailyLogViewParts = [
+    dailyLogSort !== "date-desc"
+      ? DAILY_LOG_SORT_OPTIONS.find((option) => option.value === dailyLogSort)?.label
+      : null,
+    dailyLogStatusFilter !== "all" ? dailyLogStatusFilter : null,
+    dailyLogMonthFilter !== "all"
+      ? dailyLogMonthOptions.find((month) => month.value === dailyLogMonthFilter)?.label
+      : null,
+    dailyLogWalletFilter === "logged"
+      ? "Wallet logged only"
+      : dailyLogWalletFilter === "missing"
+        ? "Wallet missing only"
+        : null,
+  ].filter(Boolean);
+
+  const totalFilteredDailyLogs = sortedDailyRecords.length;
+  const totalDailyLogPages = Math.max(
+    1,
+    Math.ceil(totalFilteredDailyLogs / dailyLogPageSize)
+  );
+
+  const safeDailyLogPage = Math.min(dailyLogPage, totalDailyLogPages);
+  const dailyLogStartIndex =
+    totalFilteredDailyLogs > 0 ? (safeDailyLogPage - 1) * dailyLogPageSize : 0;
+  const dailyLogEndIndex = Math.min(
+    dailyLogStartIndex + dailyLogPageSize,
+    totalFilteredDailyLogs
+  );
+  const paginatedDailyRecords = sortedDailyRecords.slice(
+    dailyLogStartIndex,
+    dailyLogEndIndex
   );
 
   const maxWeeklyEarnings =
@@ -583,6 +1124,16 @@ function App() {
   }, [latestRecord, selectedWeekStart]);
 
   useEffect(() => {
+    if (dailyLogPage > totalDailyLogPages) {
+      setDailyLogPage(totalDailyLogPages);
+    }
+  }, [dailyLogPage, totalDailyLogPages]);
+
+  useEffect(() => {
+    setDailyLogPage(1);
+  }, [dailyLogPageSize, dailyLogSort, dailyLogStatusFilter, dailyLogMonthFilter, dailyLogWalletFilter]);
+
+  useEffect(() => {
     if (!error && !successMessage && !importResult) {
       return;
     }
@@ -630,6 +1181,38 @@ function App() {
     setIsWeekBrowserOpen(false);
   }
 
+  function resetDailyLogTableView() {
+    setDailyLogSort("date-desc");
+    setDailyLogStatusFilter("all");
+    setDailyLogMonthFilter("all");
+    setDailyLogWalletFilter("all");
+    setDailyLogPage(1);
+  }
+
+  function scrollFormIntoView() {
+    window.requestAnimationFrame(() => {
+      formSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
+  function openAddFormForDate(dateString = getTodayInputValue(), shouldScroll = true) {
+    setEditingDate(null);
+    setIsFormOpen(true);
+    setFormData(createEmptyForm(dateString));
+    setShowAdvancedTracking(false);
+    setSelectedRecordDate(dateString);
+
+    const weekStart = getWeekStart(dateString);
+    setSelectedWeekStart(formatDateForInput(weekStart));
+
+    setError("");
+    setSuccessMessage("");
+
+    if (shouldScroll) {
+      scrollFormIntoView();
+    }
+  }
+
   function handleInputChange(event) {
     const { name, value } = event.target;
 
@@ -650,7 +1233,7 @@ function App() {
 
     setFormData({
       date: record.date,
-      online_hours: String(record.online_hours),
+      online_hours: decimalHoursToHHMM(record.online_hours),
       trips: String(record.trips),
       net_fare: String(record.net_fare),
       tips: String(record.tips),
@@ -689,7 +1272,7 @@ function App() {
   function cancelEdit() {
     setEditingDate(null);
     setIsFormOpen(false);
-    setFormData(emptyForm);
+    setFormData(createEmptyForm());
     setShowAdvancedTracking(false);
     setError("");
     setSuccessMessage("");
@@ -705,9 +1288,16 @@ function App() {
     setError("");
     setSuccessMessage("");
 
+    const onlineHoursResult = hhmmToDecimalHours(formData.online_hours);
+
+    if (onlineHoursResult.error) {
+      setError(onlineHoursResult.error);
+      return;
+    }
+
     const newRecord = {
       date: formData.date,
-      online_hours: Number(formData.online_hours),
+      online_hours: onlineHoursResult.decimalHours,
       trips: Number(formData.trips),
       net_fare: Number(formData.net_fare),
       tips: Number(formData.tips),
@@ -911,7 +1501,7 @@ function App() {
 
       const savedRecord = await response.json();
 
-      setFormData(emptyForm);
+      setFormData(createEmptyForm());
       setShowAdvancedTracking(false);
       setIsFormOpen(false);
       setSelectedRecordDate(savedRecord.date);
@@ -960,7 +1550,7 @@ function App() {
 
       if (editingDate === date) {
         setEditingDate(null);
-        setFormData(emptyForm);
+        setFormData(createEmptyForm());
         setShowAdvancedTracking(false);
       }
 
@@ -1098,7 +1688,7 @@ function App() {
   return (
     <main className="app">
       <section className="hero">
-        <p className="eyebrow">Uber Dashboard v3.0</p>
+        <p className="eyebrow">Uber Dashboard v3.1</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -1164,7 +1754,7 @@ function App() {
             <div>
               <div className="week-nav-group">
                 <p className="eyebrow">
-                  {selectedRecordIsInVisibleWeek ? "Selected day" : "Weekly earnings"}
+                  {isSelectedDayMode ? "Selected day" : "Weekly earnings"}
                 </p>
 
                 <div className="week-nav">
@@ -1173,8 +1763,8 @@ function App() {
                   </button>
 
                   <h2>
-                    {selectedRecordIsInVisibleWeek
-                      ? formatRecordDate(selectedRecord.date)
+                    {isSelectedDayMode
+                      ? formatRecordDate(selectedChartDay.date)
                       : weekStartDate && weekEndDate
                         ? `${formatShortDate(weekStartDate)} - ${formatShortDate(weekEndDate)}`
                         : "Current week"}
@@ -1212,14 +1802,10 @@ function App() {
             </div>
 
             <div className="weekly-total">
-              <p>{selectedRecordIsInVisibleWeek ? "Day total" : "Week total"}</p>
+              <p>{isSelectedDayMode ? "Day total" : "Week total"}</p>
               <h3>
                 <AnimatedNumber
-                  value={
-                    selectedRecordIsInVisibleWeek
-                      ? selectedRecord.total_earnings
-                      : weeklyTotalEarnings
-                  }
+                  value={displayedTotalEarnings}
                   format={(v) => `$${v.toFixed(2)}`}
                 />
               </h3>
@@ -1236,9 +1822,9 @@ function App() {
               return (
                 <button
                   type="button"
-                  className={`weekly-bar-item ${
-                    selectedRecord?.date === day.date ? "selected-weekly-bar" : ""
-                  } ${day.hasRecord ? "clickable-weekly-bar" : ""}`}
+                  className={`weekly-bar-item clickable-weekly-bar ${
+                    selectedRecordDate === day.date ? "selected-weekly-bar" : ""
+                  } ${day.hasRecord ? "" : "no-record-weekly-bar"}`}
                   // Deliberately using the array index as the key, not
                   // day.date. This list always has exactly 7 fixed
                   // positions (Mon..Sun) that never reorder, so index is
@@ -1251,7 +1837,6 @@ function App() {
                   // at its final value, with no transition to show.
                   key={index}
                   onClick={() => handleWeeklyBarClick(day)}
-                  disabled={!day.hasRecord}
                 >
                   <div className="weekly-bar-value">
                     {day.earnings > 0 ? `$${day.earnings.toFixed(0)}` : ""}
@@ -1278,7 +1863,7 @@ function App() {
               <p>Online</p>
               <strong>
                 <AnimatedNumber
-                  value={selectedRecordIsInVisibleWeek ? selectedRecord.online_hours : weeklyTotalHours}
+                  value={displayedOnlineHours}
                   format={formatHoursAndMinutes}
                 />
               </strong>
@@ -1287,18 +1872,11 @@ function App() {
             <div>
               <p>Real work</p>
               <strong>
-                {(() => {
-                  const val = selectedRecordIsInVisibleWeek
-                    ? selectedRecord.real_work_hours
-                    : weeklyRealWorkHours > 0
-                      ? weeklyRealWorkHours
-                      : null;
-                  return val !== null && val !== undefined ? (
-                    <AnimatedNumber value={val} format={formatHoursAndMinutes} />
-                  ) : (
-                    "—"
-                  );
-                })()}
+                {displayedRealWorkHours !== null && displayedRealWorkHours !== undefined ? (
+                  <AnimatedNumber value={displayedRealWorkHours} format={formatHoursAndMinutes} />
+                ) : (
+                  "—"
+                )}
               </strong>
             </div>
 
@@ -1306,7 +1884,7 @@ function App() {
               <p>Trips</p>
               <strong>
                 <AnimatedNumber
-                  value={selectedRecordIsInVisibleWeek ? selectedRecord.trips : weeklyTotalTrips}
+                  value={displayedTrips}
                   format={(v) => Math.round(v)}
                 />
               </strong>
@@ -1316,7 +1894,7 @@ function App() {
               <p>Online $/hr</p>
               <strong>
                 <AnimatedNumber
-                  value={selectedRecordIsInVisibleWeek ? selectedRecord.avg_hourly : weeklyAverageHourly}
+                  value={displayedAverageHourly}
                   format={(v) => `$${v.toFixed(2)}`}
                 />
               </strong>
@@ -1325,15 +1903,9 @@ function App() {
             <div>
               <p>Real $/hr</p>
               <strong>
-                {(selectedRecordIsInVisibleWeek
-                  ? selectedRecord.earnings_per_real_work_hour
-                  : weeklyEarningsPerRealHour) !== null ? (
+                {displayedEarningsPerRealHour !== null ? (
                   <AnimatedNumber
-                    value={
-                      selectedRecordIsInVisibleWeek
-                        ? selectedRecord.earnings_per_real_work_hour
-                        : weeklyEarningsPerRealHour
-                    }
+                    value={displayedEarningsPerRealHour}
                     format={(v) => `$${v.toFixed(2)}`}
                   />
                 ) : (
@@ -1383,11 +1955,7 @@ function App() {
                 <div className="earnings-donut-center">
                   <span className="earnings-donut-center-value">
                     <AnimatedNumber
-                      value={
-                        selectedRecordIsInVisibleWeek
-                          ? selectedRecord.total_earnings
-                          : weeklyTotalEarnings
-                      }
+                      value={displayedTotalEarnings}
                       format={(v) => `$${v.toFixed(2)}`}
                     />
                   </span>
@@ -1403,13 +1971,13 @@ function App() {
                   </span>
                   <strong>
                     <AnimatedNumber
-                      value={selectedRecordIsInVisibleWeek ? selectedRecord.net_fare : weeklyNetFare}
+                      value={displayedNetFare}
                       format={(v) => `$${v.toFixed(2)}`}
                     />
                   </strong>
                   <span className="legend-percent legend-percent-fare">
                     <AnimatedNumber
-                      value={selectedRecordIsInVisibleWeek ? selectedRecord.fare_share : weeklyFareShare}
+                      value={displayedFareShare}
                       format={formatPercent}
                     />
                   </span>
@@ -1422,13 +1990,13 @@ function App() {
                   </span>
                   <strong>
                     <AnimatedNumber
-                      value={selectedRecordIsInVisibleWeek ? selectedRecord.tips : weeklyTips}
+                      value={displayedTips}
                       format={(v) => `$${v.toFixed(2)}`}
                     />
                   </strong>
                   <span className="legend-percent legend-percent-tip">
                     <AnimatedNumber
-                      value={selectedRecordIsInVisibleWeek ? selectedRecord.tip_share : weeklyTipShare}
+                      value={displayedTipShare}
                       format={formatPercent}
                     />
                   </span>
@@ -1441,13 +2009,13 @@ function App() {
                   </span>
                   <strong>
                     <AnimatedNumber
-                      value={selectedRecordIsInVisibleWeek ? selectedRecord.promotions : weeklyPromotions}
+                      value={displayedPromotions}
                       format={(v) => `$${v.toFixed(2)}`}
                     />
                   </strong>
                   <span className="legend-percent legend-percent-promo">
                     <AnimatedNumber
-                      value={selectedRecordIsInVisibleWeek ? selectedRecord.promo_share : weeklyPromoShare}
+                      value={displayedPromoShare}
                       format={formatPercent}
                     />
                   </span>
@@ -1459,127 +2027,112 @@ function App() {
               <div>
                 <p>Work miles</p>
                 <strong>
-                  {(() => {
-                    const val = selectedRecordIsInVisibleWeek
-                      ? selectedRecord.work_miles
-                      : weeklyWorkMiles > 0
-                        ? weeklyWorkMiles
-                        : null;
-                    return val !== null ? (
-                      <AnimatedNumber value={val} format={(v) => v.toFixed(1)} />
-                    ) : (
-                      "—"
-                    );
-                  })()}
+                  {displayedWorkMiles !== null ? (
+                    <AnimatedNumber value={displayedWorkMiles} format={(v) => v.toFixed(1)} />
+                  ) : (
+                    "—"
+                  )}
                 </strong>
               </div>
 
               <div>
                 <p>$/work mile</p>
                 <strong>
-                  {(() => {
-                    const val = selectedRecordIsInVisibleWeek
-                      ? selectedRecord.earnings_per_work_mile
-                      : weeklyEarningsPerWorkMile;
-                    return val !== null && val !== undefined ? (
-                      <AnimatedNumber value={val} format={(v) => `$${v.toFixed(2)}`} />
-                    ) : (
-                      "—"
-                    );
-                  })()}
+                  {displayedEarningsPerWorkMile !== null && displayedEarningsPerWorkMile !== undefined ? (
+                    <AnimatedNumber value={displayedEarningsPerWorkMile} format={(v) => `$${v.toFixed(2)}`} />
+                  ) : (
+                    "—"
+                  )}
                 </strong>
               </div>
 
               <div>
                 <p>Miles/trip</p>
                 <strong>
-                  {(() => {
-                    const val = selectedRecordIsInVisibleWeek
-                      ? selectedRecord.miles_per_trip
-                      : weeklyTotalTrips > 0 && weeklyWorkMiles > 0
-                        ? weeklyWorkMiles / weeklyTotalTrips
-                        : null;
-                    return val !== null ? (
-                      <AnimatedNumber value={val} format={(v) => v.toFixed(1)} />
-                    ) : (
-                      "—"
-                    );
-                  })()}
+                  {displayedMilesPerTrip !== null ? (
+                    <AnimatedNumber value={displayedMilesPerTrip} format={(v) => v.toFixed(1)} />
+                  ) : (
+                    "—"
+                  )}
                 </strong>
               </div>
 
               <div>
                 <p>Wallet Δ</p>
                 <strong className="wallet-delta-text">
-                  {(() => {
-                    const val = selectedRecordIsInVisibleWeek
-                      ? selectedRecord.wallet_delta
-                      : currentWeekData
-                        ? currentWeekData.wallet_delta
-                        : null;
-                    return val !== null && val !== undefined ? (
-                      <AnimatedNumber
-                        value={val}
-                        format={(v) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`}
-                      />
-                    ) : (
-                      "—"
-                    );
-                  })()}
+                  {displayedWalletDelta !== null && displayedWalletDelta !== undefined ? (
+                    <AnimatedNumber
+                      value={displayedWalletDelta}
+                      format={(v) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`}
+                    />
+                  ) : (
+                    "—"
+                  )}
                 </strong>
                 <span className="wallet-delta-subtext">
-                  {selectedRecordIsInVisibleWeek
-                    ? (selectedRecord.wallet_delta !== null
-                        ? (selectedRecord.wallet_delta_days_ago === 0
-                            ? "same day logged"
-                            : selectedRecord.wallet_delta_days_ago === 1
-                              ? "vs 1 day ago"
-                              : `vs ${selectedRecord.wallet_delta_days_ago} days ago`)
-                        : "Wallet not logged")
-                    : (currentWeekData && currentWeekData.wallet_delta !== null
-                        ? `${formatShortDate(new Date(`${currentWeekData.wallet_delta_start_date}T00:00:00`))} → ${formatShortDate(new Date(`${currentWeekData.wallet_delta_end_date}T00:00:00`))}`
-                      : "Wallet not logged")}
+                  {displayedWalletDeltaSubtext}
               </span>
             </div>
           </div>
         </div>
 
-          {selectedRecordIsInVisibleWeek && (
+          {(selectedRecordIsInVisibleWeek || selectedEmptyDayIsInVisibleWeek) && (
             <div className="selected-day-extra">
-              <div className="selected-day-footer-top">
-                <div className="label-row">
-                  <span className={`label-chip label-${getLabelVariant(selectedRecord.hourly_label)}`}>
-                    {selectedRecord.hourly_label}
-                  </span>
-                  <span className={`label-chip label-${getLabelVariant(selectedRecord.promo_label)}`}>
-                    {selectedRecord.promo_label}
-                  </span>
-                  <span className={`label-chip label-${getLabelVariant(selectedRecord.tip_label)}`}>
-                    {selectedRecord.tip_label}
-                  </span>
-                  <span className={`label-chip label-${getLabelVariant(selectedRecord.mileage_label)}`}>
-                    {selectedRecord.mileage_label}
-                  </span>
-                </div>
+              {selectedRecordIsInVisibleWeek ? (
+                <>
+                  <div className="selected-day-footer-top">
+                    <div className="selected-day-details">
+                      <div className="label-row">
+                        <LabelChip label={selectedRecord.hourly_label} record={selectedRecord} />
+                        <LabelChip label={selectedRecord.promo_label} record={selectedRecord} />
+                        <LabelChip label={selectedRecord.tip_label} record={selectedRecord} />
+                        <LabelChip label={selectedRecord.mileage_label} record={selectedRecord} />
+                      </div>
 
-                <p>
-                  <strong>Wallet:</strong>{" "}
-                  {selectedRecord.wallet_balance !== null
-                    ? `$${selectedRecord.wallet_balance.toFixed(2)}`
-                    : "Not logged"}
-                  {formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago) && (
-                    <span className="wallet-delta-inline">
-                      {" "}
-                      ({formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago)})
-                    </span>
+                      <button
+                        type="button"
+                        className="edit-button selected-day-edit-button"
+                        onClick={() => handleEdit(selectedRecord)}
+                      >
+                        Edit this day
+                      </button>
+                    </div>
+
+                    <p>
+                      <strong>Wallet:</strong>{" "}
+                      {selectedRecord.wallet_balance !== null
+                        ? `$${selectedRecord.wallet_balance.toFixed(2)}`
+                        : "Not logged"}
+                      {formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago) && (
+                        <span className="wallet-delta-inline">
+                          {" "}
+                          ({formatWalletDelta(selectedRecord.wallet_delta, selectedRecord.wallet_delta_days_ago)})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  {selectedRecord.notes && (
+                    <div className="recap-notes">
+                      <strong>Notes:</strong>
+                      <p>{selectedRecord.notes}</p>
+                    </div>
                   )}
-                </p>
-              </div>
+                </>
+              ) : (
+                <div className="selected-day-empty">
+                  <div>
+                    <strong>No log for {formatRecordDate(selectedEmptyChartDay.date)}</strong>
+                    <p>Add this missing day directly from the chart instead of opening the date picker manually.</p>
+                  </div>
 
-              {selectedRecord.notes && (
-                <div className="recap-notes">
-                  <strong>Notes:</strong>
-                  <p>{selectedRecord.notes}</p>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => openAddFormForDate(selectedEmptyChartDay.date)}
+                  >
+                    + Add log for this day
+                  </button>
                 </div>
               )}
             </div>
@@ -1605,13 +2158,29 @@ function App() {
               <button
                 type="button"
                 className="primary-button"
-                onClick={() => {
-                  setIsFormOpen(true);
-                  setError("");
-                  setSuccessMessage("");
-                }}
+                onClick={() => openAddFormForDate(getTodayInputValue(), false)}
               >
                 + Add daily log
+              </button>
+            )}
+
+            {dailyRecords.length > 0 && (
+              <button
+                type="button"
+                className={`daily-log-toggle-button ${
+                  isDailyLogToolsOpen || hasCustomDailyLogTableView
+                    ? "daily-log-toggle-button-active"
+                    : ""
+                }`}
+                onClick={() => setIsDailyLogToolsOpen((currentValue) => !currentValue)}
+                aria-expanded={isDailyLogToolsOpen}
+                aria-controls="daily-log-tools"
+              >
+                {isDailyLogToolsOpen
+                  ? "Hide filters"
+                  : hasCustomDailyLogTableView
+                    ? "Filters active"
+                    : "Filter / sort"}
               </button>
             )}
 
@@ -1952,6 +2521,102 @@ function App() {
       </section>
       )}
 
+        {dailyRecords.length > 0 && !isDailyLogToolsOpen && hasCustomDailyLogTableView && (
+          <div className="daily-log-active-summary">
+            <span>
+              Showing {totalFilteredDailyLogs} of {dailyRecords.length} logs
+              {activeDailyLogViewParts.length > 0 ? ` · ${activeDailyLogViewParts.join(" · ")}` : ""}
+            </span>
+            <button type="button" onClick={resetDailyLogTableView}>
+              Reset
+            </button>
+          </div>
+        )}
+
+        {dailyRecords.length > 0 && isDailyLogToolsOpen && (
+          <div className="daily-log-tools" id="daily-log-tools">
+            <div className="daily-log-tools-header">
+              <div>
+                <h3>Filter and sort logs</h3>
+                <p>Use this when you want the best days, worst days, or a narrower slice.</p>
+              </div>
+
+              <button
+                type="button"
+                className="reset-table-view-button"
+                onClick={resetDailyLogTableView}
+                disabled={!hasCustomDailyLogTableView}
+              >
+                Reset view
+              </button>
+            </div>
+
+            <div className="daily-log-controls">
+              <label>
+                Sort by
+                <select
+                  value={dailyLogSort}
+                  onChange={(event) => setDailyLogSort(event.target.value)}
+                >
+                  {DAILY_LOG_SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Status
+                <select
+                  value={dailyLogStatusFilter}
+                  onChange={(event) => setDailyLogStatusFilter(event.target.value)}
+                >
+                  <option value="all">All statuses</option>
+                  {dailyLogStatusOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Month
+                <select
+                  value={dailyLogMonthFilter}
+                  onChange={(event) => setDailyLogMonthFilter(event.target.value)}
+                >
+                  <option value="all">All months</option>
+                  {dailyLogMonthOptions.map((month) => (
+                    <option key={month.value} value={month.value}>
+                      {month.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Wallet
+                <select
+                  value={dailyLogWalletFilter}
+                  onChange={(event) => setDailyLogWalletFilter(event.target.value)}
+                >
+                  <option value="all">All wallet logs</option>
+                  <option value="logged">Wallet logged only</option>
+                  <option value="missing">Wallet missing only</option>
+                </select>
+              </label>
+            </div>
+
+            <p className="daily-log-filter-summary">
+              {hasActiveDailyLogFilters
+                ? `${totalFilteredDailyLogs} of ${dailyRecords.length} daily logs match`
+                : `${dailyRecords.length} daily logs`}
+            </p>
+          </div>
+        )}
+
         <table>
           <thead>
             <tr>
@@ -1972,8 +2637,14 @@ function App() {
                   No daily logs yet.
                 </td>
               </tr>
+            ) : paginatedDailyRecords.length === 0 ? (
+              <tr>
+                <td colSpan="7" className="empty-table-cell">
+                  No daily logs match the current filters.
+                </td>
+              </tr>
             ) : (
-              dailyRecords.map((record) => (
+              paginatedDailyRecords.map((record) => (
                 <tr
                   key={record.date}
                   className={selectedRecord?.date === record.date ? "selected-row" : ""}
@@ -1991,15 +2662,9 @@ function App() {
                   </td>
                   <td>
                     <div className="table-labels">
-                      <span className={`label-chip label-${getLabelVariant(record.hourly_label)}`}>
-                        {record.hourly_label}
-                      </span>
-                      <span className={`label-chip label-${getLabelVariant(record.promo_label)}`}>
-                        {record.promo_label}
-                      </span>
-                      <span className={`label-chip label-${getLabelVariant(record.mileage_label)}`}>
-                        {record.mileage_label}
-                      </span>
+                      <LabelChip label={record.hourly_label} record={record} />
+                      <LabelChip label={record.promo_label} record={record} />
+                      <LabelChip label={record.mileage_label} record={record} />
                     </div>
                   </td>
                   <td>
@@ -2041,6 +2706,57 @@ function App() {
             )}
           </tbody>
         </table>
+
+        {dailyRecords.length > 0 && totalFilteredDailyLogs > 0 && (
+          <div className="table-pagination">
+            <p>
+              Showing {dailyLogStartIndex + 1}–{dailyLogEndIndex} of {totalFilteredDailyLogs}
+              {hasActiveDailyLogFilters ? ` filtered from ${dailyRecords.length}` : ""}
+            </p>
+
+            <div className="table-pagination-controls">
+              <label className="rows-per-page-label">
+                Rows per page
+                <select
+                  value={dailyLogPageSize}
+                  onChange={(event) => setDailyLogPageSize(Number(event.target.value))}
+                >
+                  {DAILY_LOG_PAGE_SIZE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="page-step-controls">
+                <button
+                  type="button"
+                  onClick={() => setDailyLogPage((currentPage) => Math.max(currentPage - 1, 1))}
+                  disabled={safeDailyLogPage === 1}
+                >
+                  ← Previous
+                </button>
+
+                <span>
+                  Page {safeDailyLogPage} of {totalDailyLogPages}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDailyLogPage((currentPage) =>
+                      Math.min(currentPage + 1, totalDailyLogPages)
+                    )
+                  }
+                  disabled={safeDailyLogPage === totalDailyLogPages}
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {dailyRecords.length > 0 && (
           <div className="danger-zone">

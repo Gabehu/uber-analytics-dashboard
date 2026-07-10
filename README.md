@@ -4,7 +4,7 @@ A local full-stack dashboard for tracking Uber delivery earnings, mileage, time,
 
 The goal is to explain what those earnings actually mean: was the day efficient, was it promo- or tip-carried, and was the mileage/time actually worth it?
 
-**Current version:** v3.0.0
+**Current version:** v3.1.0
 
 ## Tech Stack
 
@@ -28,6 +28,10 @@ The goal is to explain what those earnings actually mean: was the day efficient,
 - **Scroll-to-section**: View scrolls to the top of the dashboard, Edit scrolls the form into view, so the UI never leaves you wondering if a click did anything
 - An error boundary shows a readable message instead of a blank screen if something breaks
 - Full CRUD on daily logs (view/edit/delete) via the frontend table
+- **Chart-to-entry shortcut** — empty days on the weekly chart can be selected and used to start a new daily log for that exact date, avoiding manual date picker navigation
+- **Daily log pagination** — Daily logs are split into pages with adjustable rows per page, so long histories do not stretch endlessly down the page
+- **Daily log filters and sorting** — collapsible Filter / Sort controls for browsing logs by status, month, wallet logging state, total earnings, hourly rate, real hourly rate, mileage efficiency, trips, newest, and oldest
+- **Status tooltips** — hovering or focusing rule-based status labels shows a short explanation of what the label means and which metric it relates to
 
 ## Project Structure
 
@@ -122,6 +126,7 @@ It refuses to run over what looks like real accumulated data; pass `--force` to 
 - **v2.4** — Wallet delta (day-over-day and week-over-week wallet change), plus wallet balance featured on the summary dashboard.
 - **v2.5** — Earnings composition donut chart (replacing the old Net fare/Tips/Promotions cards), scroll-to-section on View/Edit, animated weekly bars on data change, and a UI consistency pass: unified Cancel button placement, consistent form action row layout, colored secondary buttons.
 - **v3.0** — CSV import (backup/restore), Browse weeks (a mini-chart-per-week panel), animated donut chart and animated stat numbers throughout, a delete-all-records safety flow, an error boundary, a one-click startup script, and a project-wide cleanup/comments pass.
+- **v3.1** — Daily log usability update: chart-to-entry shortcuts for missing days, pagination for long log histories, collapsible filters/sorting for Daily logs, status tooltips, quick edit access from selected-day view, and a local-date fix for the Add daily log form.
 
 ## What's Next
 
