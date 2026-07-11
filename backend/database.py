@@ -6,7 +6,7 @@ DATABASE_PATH = Path(__file__).parent / "uber_dashboard.db"
 
 
 # ============================================================
-# Day Effects (v3.1) — fixed tag vocabulary
+# Day Effects (v3.2) — fixed tag vocabulary
 # ============================================================
 #
 # A small, closed set of self-reported conditions, distinct from the app's
@@ -20,6 +20,7 @@ ALLOWED_DAY_TAGS = {
     "heavy_traffic",
     "high_demand",
     "low_demand",
+    "dead_zone",
     "good_orders",
     "bad_orders",
     "quest_day",
@@ -427,6 +428,11 @@ def initialize_database():
         """
     )
 
+    # v3.2: if the table already existed from before Day Effects shipped,
+    # add the new column in place rather than requiring a fresh DB. Wrapped
+    # in try/except since ALTER TABLE ADD COLUMN fails if the column is
+    # already there (e.g. on a brand-new DB created with the CREATE TABLE
+    # above, which already includes it).
     try:
         cursor.execute("ALTER TABLE daily_logs ADD COLUMN day_tags TEXT")
     except sqlite3.OperationalError:

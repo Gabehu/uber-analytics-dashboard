@@ -43,6 +43,7 @@ const DAY_TAG_GROUPS = [
       { value: "heavy_traffic", label: "Heavy traffic" },
       { value: "high_demand", label: "High demand" },
       { value: "low_demand", label: "Low demand" },
+      { value: "dead_zone", label: "Dead zone" },
     ],
   },
   {
@@ -130,19 +131,32 @@ function DayTagIcon({ category }) {
   );
 }
 
-// Short human sentence for a tag's tooltip, so day-effect pills get the same
-// hover affordance the rule-based status chips have (a pill with no tooltip
-// sitting next to pills that have them looks broken).
-const DAY_TAG_CATEGORY_LABEL = {
-  weather: "Weather condition",
-  traffic: "Demand / traffic condition",
-  orders: "Order-quality condition",
-  operational: "Operational condition",
+// Real, specific definition per tag -- not just "X condition you tagged" --
+// so hovering any Day Effects chip (in the form, the selected-day view, or
+// the table) explains what the tag actually means, the same way the
+// rule-based status chips explain their numeric boundary. These are
+// self-reported/subjective tags with no formula behind them, so the
+// wording here is the working definition, not a computed rule.
+const DAY_TAG_DEFINITIONS = {
+  rain: "It was raining for some or all of the shift.",
+  snow: "It was snowing for some or all of the shift.",
+
+  heavy_traffic: "Congestion slowed you down — more time on the road per trip than normal.",
+  high_demand: "Orders came in back-to-back with little wait between drop-off and the next ping — the app felt \"on.\"",
+  low_demand: "Noticeable dead air between orders — slow ping turnaround, possibly no surge active.",
+  dead_zone: "Multiple orders sent you far from stores or populated areas, into sparse/rural territory with a long relocation back — a day-wide pattern, not just one bad order.",
+
+  good_orders: "Orders were worth taking — solid pay, reasonable distance, no major complaints.",
+  bad_orders: "Orders were frustrating or low-value — small payouts, bad ratios, or not worth the drive.",
+
+  quest_day: "A quest/bonus incentive was active and factored into the shift.",
+  app_issues: "The Uber app itself glitched, froze, or otherwise misbehaved during the shift.",
+  low_battery: "Car (or device) battery was a limiting factor — a rough start or a cut-short shift because of it.",
+  phone_hotspot_issues: "Phone signal or hotspot connectivity caused problems during the shift.",
 };
 
 function getDayTagTooltip(tagValue) {
-  const category = getDayTagCategory(tagValue);
-  return `${getDayTagLabel(tagValue)} — ${DAY_TAG_CATEGORY_LABEL[category] || "condition"} you tagged for this day.`;
+  return DAY_TAG_DEFINITIONS[tagValue] || `${getDayTagLabel(tagValue)} — condition you tagged for this day.`;
 }
 
 // A single day-effect pill: icon + label + tooltip, used in both the
@@ -157,12 +171,14 @@ function DayTagChip({ tagValue, inTable = false }) {
       <span
         className={`day-tag-chip day-tag-chip-${category} ${inTable ? "day-tag-chip-table" : ""}`}
         tabIndex="0"
+        onMouseUp={(event) => event.currentTarget.blur()}
       >
         <DayTagIcon category={category} />
         <span className="day-tag-chip-label">{getDayTagLabel(tagValue)}</span>
       </span>
       <span className="day-tag-tooltip" role="tooltip">
-        {getDayTagTooltip(tagValue)}
+        <strong className="day-tag-tooltip-title">{getDayTagLabel(tagValue)}</strong>
+        <span className="day-tag-tooltip-body">{getDayTagTooltip(tagValue)}</span>
       </span>
     </span>
   );
@@ -176,7 +192,7 @@ function DayTagChip({ tagValue, inTable = false }) {
 function DayTagOverflowChip({ tagValues }) {
   return (
     <span className="day-tag-tooltip-wrap">
-      <span className="table-day-tag-more" tabIndex="0">
+      <span className="table-day-tag-more" tabIndex="0" onMouseUp={(event) => event.currentTarget.blur()}>
         +{tagValues.length}
       </span>
       <span className="day-tag-tooltip day-tag-overflow-tooltip" role="tooltip">
@@ -336,7 +352,6 @@ function getLabelVariant(label) {
   return LABEL_VARIANTS[label] || "neutral";
 }
 
-
 function formatTooltipCurrency(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
     return "not available";
@@ -390,73 +405,90 @@ function getStatusTooltip(label, record) {
   const tooltips = {
     "Strong hourly": {
       metric: `Online $/hr: ${onlineHourly}`,
+      range: "Strong hourly: $30+ online $/hr",
       body: "This day landed in the strongest hourly bucket based on earnings divided by online hours.",
     },
     "Good hourly": {
       metric: `Online $/hr: ${onlineHourly}`,
+      range: "Good hourly: $25–$30 online $/hr",
       body: "This day cleared the good hourly range, but did not reach the strongest bucket.",
     },
     "Acceptable hourly": {
       metric: `Online $/hr: ${onlineHourly}`,
+      range: "Acceptable hourly: $20–$25 online $/hr",
       body: "This day was workable, but the hourly rate was not high enough to count as good.",
     },
     "Weak hourly": {
       metric: `Online $/hr: ${onlineHourly}`,
+      range: "Weak hourly: $15–$20 online $/hr",
       body: "This day fell below the target hourly range.",
     },
     "Bad hourly": {
       metric: `Online $/hr: ${onlineHourly}`,
+      range: "Bad hourly: below $15 online $/hr",
       body: "This day had a very low return for the amount of online time logged.",
     },
 
     "Organic earnings": {
       metric: `Promotions: ${promoAmount} (${promoShare})`,
+      range: "Organic earnings: under 10% of earnings from promotions",
       body: "Most of this day came from fare and tips rather than promotion money.",
     },
     "Promo helped": {
       metric: `Promotions: ${promoAmount} (${promoShare})`,
+      range: "Promo helped: 10%–25% of earnings from promotions",
       body: "Promotions gave the day a meaningful boost, but they were not the main source of earnings.",
     },
     "Promo-carried": {
       metric: `Promotions: ${promoAmount} (${promoShare})`,
+      range: "Promo-carried: 25%+ of earnings from promotions",
       body: "A large share of this day came from promotions, so the day was heavily dependent on promo money.",
     },
 
     "Tip-carried": {
       metric: `Tips: ${tipAmount} (${tipShare})`,
+      range: "Tip-carried: 50%+ of earnings from tips",
       body: "Tips made up a very large share of this day's earnings.",
     },
     "Solid tips": {
       metric: `Tips: ${tipAmount} (${tipShare})`,
+      range: "Solid tips: 35%–50% of earnings from tips",
       body: "Tips were a strong part of the total without fully carrying the day.",
     },
     "Normal tips": {
       metric: `Tips: ${tipAmount} (${tipShare})`,
+      range: "Normal tips: 25%–35% of earnings from tips",
       body: "Tip share looked normal for this entry.",
     },
     "Weak tips": {
       metric: `Tips: ${tipAmount} (${tipShare})`,
+      range: "Weak tips: under 25% of earnings from tips",
       body: "Tips were a low share of this day's earnings.",
     },
 
     "Strong mileage": {
       metric: `$/work mile: ${perWorkMile} · Work miles: ${workMiles} · Miles/trip: ${milesPerTrip}`,
+      range: "Strong mileage: $1.50+ per work mile",
       body: "Mileage efficiency was strong based on earnings per work mile.",
     },
     "Solid mileage": {
       metric: `$/work mile: ${perWorkMile} · Work miles: ${workMiles} · Miles/trip: ${milesPerTrip}`,
+      range: "Solid mileage: $1.00–$1.50 per work mile",
       body: "Mileage efficiency was decent and stayed within a reasonable range.",
     },
     "Questionable mileage": {
       metric: `$/work mile: ${perWorkMile} · Work miles: ${workMiles} · Miles/trip: ${milesPerTrip}`,
+      range: "Questionable mileage: $0.75–$1.00 per work mile",
       body: "Mileage efficiency was borderline and worth checking against the route/shift details.",
     },
     "Weak mileage": {
       metric: `$/work mile: ${perWorkMile} · Work miles: ${workMiles} · Miles/trip: ${milesPerTrip}`,
+      range: "Weak mileage: below $0.75 per work mile",
       body: "Mileage efficiency was weak, meaning the day required too many work miles for the earnings.",
     },
     "Mileage not logged": {
       metric: "Odometer/work-mile fields are missing.",
+      range: null,
       body: "The app cannot calculate mileage efficiency for this entry until mileage data is logged.",
     },
   };
@@ -464,6 +496,7 @@ function getStatusTooltip(label, record) {
   return (
     tooltips[label] || {
       metric: "Rule details not available.",
+      range: null,
       body: "This status was generated from the daily log metrics.",
     }
   );
@@ -474,13 +507,18 @@ function LabelChip({ label, record }) {
 
   return (
     <span className="label-tooltip-wrap">
-      <span className={`label-chip label-${getLabelVariant(label)}`} tabIndex="0">
+      <span
+        className={`label-chip label-${getLabelVariant(label)}`}
+        tabIndex="0"
+        onMouseUp={(event) => event.currentTarget.blur()}
+      >
         {label}
       </span>
       <span className="label-tooltip" role="tooltip">
         <strong className="label-tooltip-title">{label}</strong>
         <span className="label-tooltip-body">{tooltip.body}</span>
         <span className="label-tooltip-metric">{tooltip.metric}</span>
+        {tooltip.range && <span className="label-tooltip-range">{tooltip.range}</span>}
       </span>
     </span>
   );
@@ -1980,7 +2018,7 @@ function App() {
   return (
     <main className="app">
       <section className="hero">
-        <p className="eyebrow">Uber Dashboard v3.1</p>
+        <p className="eyebrow">Uber Dashboard v3.2</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -2737,15 +2775,23 @@ function App() {
                       const isSelected = (formData.day_tags || []).includes(tag.value);
 
                       return (
-                        <button
-                          type="button"
-                          key={tag.value}
-                          className={`day-tag-toggle ${isSelected ? "day-tag-toggle-active" : ""}`}
-                          onClick={() => toggleDayTag(tag.value)}
-                          aria-pressed={isSelected}
-                        >
-                          {tag.label}
-                        </button>
+                        <span className="day-tag-tooltip-wrap" key={tag.value}>
+                          <button
+                            type="button"
+                            className={`day-tag-toggle ${isSelected ? "day-tag-toggle-active" : ""}`}
+                            onClick={(event) => {
+                              toggleDayTag(tag.value);
+                              event.currentTarget.blur();
+                            }}
+                            aria-pressed={isSelected}
+                          >
+                            {tag.label}
+                          </button>
+                          <span className="day-tag-tooltip" role="tooltip">
+                            <strong className="day-tag-tooltip-title">{tag.label}</strong>
+                            <span className="day-tag-tooltip-body">{getDayTagTooltip(tag.value)}</span>
+                          </span>
+                        </span>
                       );
                     })}
                   </div>

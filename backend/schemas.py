@@ -82,6 +82,11 @@ class DailyRecordCreate(BaseModel):
     wallet_balance: float | None = None
     notes: str | None = None
 
+    # v3.2 — Day Effects: optional tags describing conditions that affected
+    # the shift (weather, traffic, order quality, operational issues). A
+    # fixed vocabulary enforced by ALLOWED_DAY_TAGS in database.py, not
+    # freeform text, so it stays filterable rather than turning into a
+    # second notes field.
     day_tags: list[str] | None = None
 
 

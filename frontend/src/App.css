@@ -934,7 +934,7 @@ th {
   min-width: 0;
 }
 
-/* --- Day Effects (v2.7): optional tag picker + display --- */
+/* --- Day Effects (v3.2): optional tag picker + display --- */
 
 /* The two form toggles (Advanced tracking + Day effects) share a row so
    neither pushes the other down, restoring the compact form layout. Both
@@ -1096,6 +1096,14 @@ th {
   box-shadow: 0 0 0 1px var(--border-strong);
 }
 
+/* Same lift feedback for the form's toggle buttons when their tooltip
+   wrap is hovered/focused -- keeps the interactive picker and the
+   display-only chips feeling like one consistent system. */
+.day-tag-tooltip-wrap:hover .day-tag-toggle,
+.day-tag-tooltip-wrap:focus-within .day-tag-toggle {
+  filter: brightness(1.1);
+}
+
 /* Per-category neutral tints — muted, no green/red sentiment. */
 .day-tag-chip-weather {
   color: #8fb8d8;
@@ -1135,6 +1143,9 @@ th {
   visibility: hidden;
   pointer-events: none;
   z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   padding: 9px 11px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -1149,12 +1160,39 @@ th {
   transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
 }
 
-.day-tag-tooltip::after {
+.day-tag-tooltip-title {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.day-tag-tooltip-body {
+  color: var(--text-secondary);
+}
+
+/* Two-layer arrow: a slightly larger triangle in the border color sits
+   behind a smaller one in the tooltip's own background color, producing a
+   thin visible outline around the pointer. A single solid-color triangle
+   nearly disappeared against the app's dark background -- this is what was
+   making the tooltip look like a disconnected floating box instead of
+   something pointing at its source chip. */
+.day-tag-tooltip::before {
   content: "";
   position: absolute;
   left: 50%;
   top: 100%;
   transform: translateX(-50%);
+  border-width: 7px 7px 0;
+  border-style: solid;
+  border-color: var(--border-strong) transparent transparent;
+}
+
+.day-tag-tooltip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%) translateY(-1px);
   border-width: 6px 6px 0;
   border-style: solid;
   border-color: #151922 transparent transparent;
@@ -1274,12 +1312,23 @@ th {
   transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
 }
 
-.label-tooltip::after {
+.label-tooltip::before {
   content: "";
   position: absolute;
   left: 50%;
   top: 100%;
   transform: translateX(-50%);
+  border-width: 7px 7px 0;
+  border-style: solid;
+  border-color: var(--border-strong) transparent transparent;
+}
+
+.label-tooltip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%) translateY(-1px);
   border-width: 6px 6px 0;
   border-style: solid;
   border-color: #151922 transparent transparent;
@@ -1305,6 +1354,15 @@ th {
 .label-tooltip-metric {
   color: var(--accent-text);
   font-weight: 600;
+}
+
+/* The tier's boundary (e.g. "Acceptable hourly: $20-$25 online $/hr") --
+   deliberately just THIS tier's range, not the full 5-tier scale, to answer
+   "why this label" without dumping unrelated tiers into a glance-tooltip. */
+.label-tooltip-range {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .label-success {
