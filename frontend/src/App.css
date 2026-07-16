@@ -167,6 +167,53 @@ h1 {
   font-size: 12px;
 }
 
+.wallet-floor-edit-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.wallet-floor-input {
+  width: 64px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.wallet-floor-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.wallet-floor-save-button {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.wallet-floor-edit-trigger {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 0;
+  text-decoration: underline;
+  height: auto;
+}
+
+.wallet-floor-edit-trigger:hover {
+  color: var(--accent-text);
+  background: transparent;
+}
+
 @media (min-width: 640px) {
   .card-featured {
     grid-column: span 2;

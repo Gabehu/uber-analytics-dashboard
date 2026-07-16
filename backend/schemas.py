@@ -11,6 +11,14 @@ class Summary(BaseModel):
     current_wallet_as_of: str | None = None
 
 
+class WalletFloor(BaseModel):
+    uber_wallet_floor: float | None = None
+
+
+class WalletFloorUpdate(BaseModel):
+    uber_wallet_floor: float
+
+
 class WeekDay(BaseModel):
     date: str
     earnings: float

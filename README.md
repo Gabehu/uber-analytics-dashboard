@@ -4,7 +4,7 @@ A local full-stack dashboard for tracking Uber delivery earnings, mileage, time,
 
 The goal is to explain what those earnings actually mean: was the day efficient, was it promo- or tip-carried, and was the mileage/time actually worth it?
 
-**Current version:** v3.1.0
+**Current version:** v3.3.0
 
 ## Tech Stack
 
@@ -22,6 +22,7 @@ The goal is to explain what those earnings actually mean: was the day efficient,
 - **Earnings composition donut** — an animated fare/tips/promotions breakdown chart with a legend, for the selected day or the current week
 - **Animated numbers** — key stats count smoothly and flash on change when you switch days or weeks; purely a visual transition cue, not a judgment (wallet figures included, styled the same as everything else)
 - **Wallet balance** featured on the dashboard (most recent logged value), plus **wallet delta** showing day-over-day and week-over-week change — informational only, not color-judged, since a drop can be a cash-out rather than a loss
+- **Wallet floor** — a manually-set, local-only reference value, edited inline on the Wallet balance card, showing how much of the current balance sits above the floor you deliberately keep resting there (e.g. a Finance sweep-above-floor arrangement); not synced from anywhere, `None` until you set it
 - **CSV export** of all daily logs, one click from the Daily logs section
 - **CSV import** for backup/restore — reads only raw input fields and recalculates everything else fresh, with a preview step (new/updated/error counts) before anything is written
 - **Delete all records** — a deliberately out-of-the-way, type-to-confirm action for wiping the database clean (e.g. clearing test data before real use)
@@ -99,6 +100,8 @@ POST   /api/daily/import/commit
 PUT    /api/daily/{date}
 DELETE /api/daily/{date}
 DELETE /api/daily
+GET    /api/settings/wallet-floor
+PUT    /api/settings/wallet-floor
 ```
 
 ## Local Database
@@ -128,6 +131,7 @@ It refuses to run over what looks like real accumulated data; pass `--force` to 
 - **v3.0** — CSV import (backup/restore), Browse weeks (a mini-chart-per-week panel), animated donut chart and animated stat numbers throughout, a delete-all-records safety flow, an error boundary, a one-click startup script, and a project-wide cleanup/comments pass.
 - **v3.1** — Daily log usability update: chart-to-entry shortcuts for missing days, pagination for long log histories, collapsible filters/sorting for Daily logs, status tooltips, quick edit access from selected-day view, and a local-date fix for the Add daily log form.
 - **v3.2** — Day Effects: a 12-tag, four-category system (Weather, Demand & traffic, Order quality, Operational) for tagging conditions that affected a shift, with per-category icons, real hover definitions for every tag, a dedicated Effects column and filter in Daily logs, and a collapsible picker in the Add/Edit form. Also: icon-only row actions (View/Hide/Edit/Delete) to reclaim table width, status-chip tooltips now show the numeric boundary for each tier (e.g. "$20–$25 online $/hr"), Edit/Delete moved to the right side of the selected-day view, a custom browser tab title and favicon, and a round of table layout and tooltip-rendering fixes.
+- **v3.3** — Wallet floor: a manually-set, local-only reference value (new `app_settings` table, `GET`/`PUT /api/settings/wallet-floor`) shown and inline-editable right on the Wallet balance card, so it's clear how much of the current balance sits above the floor you deliberately keep resting there. Also: a layout fix dropping the dashboard's fixed 1126px width/border in favor of a full-width `#root`.
 
 ## What's Next
 

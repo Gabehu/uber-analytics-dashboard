@@ -428,6 +428,18 @@ def initialize_database():
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            uber_wallet_floor REAL
+        )
+        """
+    )
+    cursor.execute(
+        "INSERT OR IGNORE INTO app_settings (id, uber_wallet_floor) VALUES (1, NULL)"
+    )
+
     # v3.2: if the table already existed from before Day Effects shipped,
     # add the new column in place rather than requiring a fresh DB. Wrapped
     # in try/except since ALTER TABLE ADD COLUMN fails if the column is
@@ -752,6 +764,33 @@ def get_summary_data():
         "current_wallet_balance": round(wallet_row["wallet_balance"], 2) if wallet_row else None,
         "current_wallet_as_of": wallet_row["date"] if wallet_row else None,
     }
+
+
+def get_wallet_floor():
+    """
+    Manually-set, purely local reference value — NOT synced from anywhere.
+    Lets the Wallet balance card show how much of the current balance sits
+    above the floor you deliberately keep resting there (e.g. because
+    Finance sweeps everything above it elsewhere). None until you set it.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT uber_wallet_floor FROM app_settings WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    return row["uber_wallet_floor"] if row else None
+
+
+def set_wallet_floor(value):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE app_settings SET uber_wallet_floor = ? WHERE id = 1",
+        (value,),
+    )
+    conn.commit()
+    conn.close()
+    return value
 
 
 def create_daily_record(record):

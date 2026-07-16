@@ -16,6 +16,8 @@ from database import (
     update_daily_record,
     delete_daily_record,
     delete_all_daily_records,
+    get_wallet_floor,
+    set_wallet_floor,
 )
 from schemas import (
     Summary,
@@ -27,6 +29,8 @@ from schemas import (
     ImportCommitResult,
     DeleteAllRequest,
     DeleteAllResult,
+    WalletFloor,
+    WalletFloorUpdate,
 )
 
 
@@ -63,6 +67,17 @@ def root():
 @app.get("/api/summary", response_model=Summary)
 def summary():
     return get_summary_data()
+
+
+@app.get("/api/settings/wallet-floor", response_model=WalletFloor)
+def get_wallet_floor_setting():
+    return {"uber_wallet_floor": get_wallet_floor()}
+
+
+@app.put("/api/settings/wallet-floor", response_model=WalletFloor)
+def update_wallet_floor_setting(payload: WalletFloorUpdate):
+    set_wallet_floor(payload.uber_wallet_floor)
+    return {"uber_wallet_floor": payload.uber_wallet_floor}
 
 
 @app.get("/api/daily", response_model=list[DailyRecord])

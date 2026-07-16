@@ -636,6 +636,9 @@ function App() {
   const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
   const [deleteAllConfirmText, setDeleteAllConfirmText] = useState("");
   const [isDeletingAll, setIsDeletingAll] = useState(false);
+  const [walletFloor, setWalletFloor] = useState(null);
+  const [isEditingWalletFloor, setIsEditingWalletFloor] = useState(false);
+  const [walletFloorInput, setWalletFloorInput] = useState("");
 
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
@@ -1420,8 +1423,42 @@ function App() {
     }
   }
 
+  async function fetchWalletFloor() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/settings/wallet-floor`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setWalletFloor(data.uber_wallet_floor);
+      setWalletFloorInput(
+        data.uber_wallet_floor !== null ? String(data.uber_wallet_floor) : ""
+      );
+    } catch {
+      // Non-critical — the card just won't show floor context if this fails.
+    }
+  }
+
+  async function saveWalletFloor() {
+    const value = Number(walletFloorInput);
+    if (Number.isNaN(value) || value < 0) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/settings/wallet-floor`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uber_wallet_floor: value }),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setWalletFloor(data.uber_wallet_floor);
+      setIsEditingWalletFloor(false);
+    } catch {
+      // Leave the edit UI open so the user can retry.
+    }
+  }
+
   useEffect(() => {
     fetchDashboardData();
+    fetchWalletFloor();
   }, []);
 
   useEffect(() => {
@@ -2018,7 +2055,7 @@ function App() {
   return (
     <main className="app">
       <section className="hero">
-        <p className="eyebrow">Uber Dashboard v3.2</p>
+        <p className="eyebrow">Uber Dashboard v3.3</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -2040,6 +2077,44 @@ function App() {
                 <span className="card-caption">
                   as of {formatShortDate(new Date(`${summary.current_wallet_as_of}T00:00:00`))}
                 </span>
+
+                {isEditingWalletFloor ? (
+                  <span className="card-caption wallet-floor-edit-row">
+                    Floor: $
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      className="wallet-floor-input"
+                      value={walletFloorInput}
+                      onChange={(e) => setWalletFloorInput(e.target.value)}
+                      autoFocus
+                    />
+                    <button type="button" className="wallet-floor-save-button" onClick={saveWalletFloor}>
+                      Save
+                    </button>
+                  </span>
+                ) : walletFloor !== null ? (
+                  <span className="card-caption">
+                    Floor: ${walletFloor.toFixed(2)} · $
+                    {Math.max(summary.current_wallet_balance - walletFloor, 0).toFixed(2)} above floor{" "}
+                    <button
+                      type="button"
+                      className="wallet-floor-edit-trigger"
+                      onClick={() => setIsEditingWalletFloor(true)}
+                    >
+                      edit
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="wallet-floor-edit-trigger"
+                    onClick={() => setIsEditingWalletFloor(true)}
+                  >
+                    + set a floor reference
+                  </button>
+                )}
               </>
             ) : (
               <>
