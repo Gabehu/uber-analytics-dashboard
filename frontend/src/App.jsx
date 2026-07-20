@@ -2803,7 +2803,7 @@ function App() {
               name="notes"
               value={formData.notes}
               onChange={handleInputChange}
-              rows="2"
+              rows="1"
             />
           </label>
 

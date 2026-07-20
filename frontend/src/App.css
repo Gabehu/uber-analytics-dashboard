@@ -929,7 +929,12 @@ th {
 }
 
 .notes-field {
-  grid-column: span 1;
+  grid-column: span 2;
+}
+
+.notes-field textarea {
+  min-height: 0;
+  height: 64px;
 }
 
 .advanced-section-heading {
