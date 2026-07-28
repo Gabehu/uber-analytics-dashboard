@@ -47,11 +47,14 @@ const DAY_TAG_GROUPS = [
     ],
   },
   {
-    group: "Order quality",
+    group: "Order quality & mix",
     category: "orders",
     tags: [
       { value: "good_orders", label: "Good orders" },
       { value: "bad_orders", label: "Bad orders" },
+      { value: "shop_and_deliver", label: "Shop and Deliver" },
+      { value: "delivery_heavy", label: "Delivery-heavy" },
+      { value: "mixed_orders", label: "Mixed orders" },
     ],
   },
   {
@@ -75,6 +78,10 @@ const DAY_TAG_LABELS = Object.fromEntries(
 const DAY_TAG_CATEGORY = Object.fromEntries(
   DAY_TAG_GROUPS.flatMap((group) => group.tags.map((tag) => [tag.value, group.category]))
 );
+
+// A few seconds of input/rounding drift should not create noise. Fifteen
+// minutes is large enough to indicate a likely missing/incorrect session.
+const REAL_WORK_WARNING_TOLERANCE_HOURS = 0.25;
 
 function getDayTagLabel(tagValue) {
   return DAY_TAG_LABELS[tagValue] || tagValue;
@@ -148,6 +155,9 @@ const DAY_TAG_DEFINITIONS = {
 
   good_orders: "Orders were worth taking — solid pay, reasonable distance, no major complaints.",
   bad_orders: "Orders were frustrating or low-value — small payouts, bad ratios, or not worth the drive.",
+  shop_and_deliver: "Shop and Deliver requests were a meaningful part of the shift — useful context when fewer, longer trips produced stronger earnings per trip.",
+  delivery_heavy: "The shift was dominated by standard pickup-and-delivery requests rather than Shop and Deliver orders.",
+  mixed_orders: "The shift included a meaningful mix of standard deliveries and Shop and Deliver orders.",
 
   quest_day: "A quest/bonus incentive was active and factored into the shift.",
   app_issues: "The Uber app itself glitched, froze, or otherwise misbehaved during the shift.",
@@ -294,6 +304,39 @@ function getTodayInputValue() {
   return toLocalInputDate(new Date());
 }
 
+function createEmptyBreak() {
+  return {
+    start_time_value: "",
+    start_time_meridiem: "PM",
+    end_time_value: "",
+    end_time_meridiem: "PM",
+    start_odometer: "",
+    end_odometer: "",
+  };
+}
+
+function createEmptyWorkSession() {
+  return {
+    start_time_value: "",
+    start_time_meridiem: "PM",
+    stop_time_value: "",
+    stop_time_meridiem: "PM",
+    start_odometer: "",
+    stop_odometer: "",
+  };
+}
+
+function createEmptyQuestForm() {
+  return {
+    start_date: "",
+    end_date: "",
+    first_tier_trips: "",
+    first_tier_bonus: "",
+    final_tier_trips: "",
+    final_additional_bonus: "",
+  };
+}
+
 function createEmptyForm(date = getTodayInputValue()) {
   return {
     date,
@@ -303,15 +346,7 @@ function createEmptyForm(date = getTodayInputValue()) {
     tips: "",
     promotions: "",
 
-    start_odometer: "",
-    end_work_odometer: "",
     end_home_odometer: "",
-
-    work_start_time_value: "",
-    work_start_time_meridiem: "PM",
-
-    uber_stop_time_value: "",
-    uber_stop_time_meridiem: "PM",
 
     home_end_time_value: "",
     home_end_time_meridiem: "PM",
@@ -320,6 +355,8 @@ function createEmptyForm(date = getTodayInputValue()) {
     notes: "",
 
     day_tags: [],
+    breaks: [],
+    work_sessions: [createEmptyWorkSession()],
   };
 }
 
@@ -332,9 +369,9 @@ const LABEL_VARIANTS = {
   "Weak hourly": "danger",
   "Bad hourly": "danger",
 
-  "Organic earnings": "success",
-  "Promo helped": "warning",
-  "Promo-carried": "danger",
+  "Organic earnings": "neutral",
+  "Promo helped": "success",
+  "Promo-boosted": "warning",
 
   "Tip-carried": "success",
   "Solid tips": "success",
@@ -350,6 +387,14 @@ const LABEL_VARIANTS = {
 
 function getLabelVariant(label) {
   return LABEL_VARIANTS[label] || "neutral";
+}
+
+function getVisiblePromoLabel(record) {
+  if (!record || Number(record.promotions) <= 0) {
+    return null;
+  }
+
+  return record.promo_label;
 }
 
 function formatTooltipCurrency(value) {
@@ -439,10 +484,10 @@ function getStatusTooltip(label, record) {
       range: "Promo helped: 10%–25% of earnings from promotions",
       body: "Promotions gave the day a meaningful boost, but they were not the main source of earnings.",
     },
-    "Promo-carried": {
+    "Promo-boosted": {
       metric: `Promotions: ${promoAmount} (${promoShare})`,
-      range: "Promo-carried: 25%+ of earnings from promotions",
-      body: "A large share of this day came from promotions, so the day was heavily dependent on promo money.",
+      range: "Promo-boosted: 25%+ of earnings from promotions",
+      body: "Promotions provided a substantial boost to this day's total Uber earnings.",
     },
 
     "Tip-carried": {
@@ -522,6 +567,366 @@ function LabelChip({ label, record }) {
       </span>
     </span>
   );
+}
+
+const HOURLY_RECAP_SIGNALS = {
+  "Strong hourly": { rank: 4, opening: "Strong online hourly", adjective: "strong" },
+  "Good hourly": { rank: 3, opening: "Good online hourly", adjective: "good" },
+  "Acceptable hourly": { rank: 2, opening: "Acceptable online hourly", adjective: "acceptable" },
+  "Weak hourly": { rank: 1, opening: "Weak online hourly", adjective: "weak" },
+  "Bad hourly": { rank: 0, opening: "Low online hourly", adjective: "low" },
+};
+
+function getHourlyLabelFromRate(hourlyRate) {
+  if (hourlyRate === null || hourlyRate === undefined || Number.isNaN(Number(hourlyRate))) {
+    return null;
+  }
+
+  if (hourlyRate >= 30) return "Strong hourly";
+  if (hourlyRate >= 25) return "Good hourly";
+  if (hourlyRate >= 20) return "Acceptable hourly";
+  if (hourlyRate >= 15) return "Weak hourly";
+  return "Bad hourly";
+}
+
+// Produces one deliberately modest interpretation from already-computed
+// metrics. It is not meant to replace the user's notes: one supporting
+// signal and one caveat is the maximum, and tagged effects are described as
+// observations rather than asserted as the cause of a result.
+function buildDailyQuickRecap(record, quest, hasRealWorkShortfall) {
+  if (!record) {
+    return null;
+  }
+
+  const onlineSignal = HOURLY_RECAP_SIGNALS[record.hourly_label];
+  if (!onlineSignal) {
+    return null;
+  }
+
+  const tags = new Set(Array.isArray(record.day_tags) ? record.day_tags : []);
+  const supports = [];
+  const cautions = [];
+
+  const realHourlyLabel = getHourlyLabelFromRate(record.earnings_per_real_work_hour);
+  const realSignal = HOURLY_RECAP_SIGNALS[realHourlyLabel];
+  if (realSignal && realSignal.rank !== onlineSignal.rank) {
+    const realHourlyPhrase = `${realSignal.adjective} real-work hourly`;
+    if (realSignal.rank > onlineSignal.rank) {
+      supports.push(realHourlyPhrase);
+    } else {
+      cautions.push(`real-work hourly was ${realSignal.adjective}`);
+    }
+  }
+
+  if (record.tip_label === "Tip-carried") {
+    supports.push("tips making up at least half of earnings");
+  } else if (record.tip_label === "Solid tips") {
+    supports.push("solid tips");
+  } else if (record.tip_label === "Weak tips") {
+    cautions.push("tip share was low");
+  }
+
+  if (record.promo_label === "Promo-boosted") {
+    supports.push("a substantial promotion boost");
+  } else if (record.promo_label === "Promo helped") {
+    supports.push("promotions adding a meaningful boost");
+  }
+
+  const taggedMileageContext = tags.has("dead_zone")
+    ? "dead-zone driving was also tagged"
+    : tags.has("heavy_traffic")
+      ? "heavy traffic was also tagged"
+      : null;
+
+  if (record.mileage_label === "Strong mileage") {
+    supports.push("strong mileage efficiency");
+  } else if (record.mileage_label === "Solid mileage") {
+    supports.push("solid mileage efficiency");
+  } else if (record.mileage_label === "Questionable mileage") {
+    cautions.push(
+      `mileage efficiency was borderline${taggedMileageContext ? `; ${taggedMileageContext}` : ""}`
+    );
+  } else if (record.mileage_label === "Weak mileage") {
+    cautions.push(
+      `mileage efficiency was weak${taggedMileageContext ? `; ${taggedMileageContext}` : ""}`
+    );
+  } else if (record.mileage_label === "Mileage not logged") {
+    cautions.push("mileage efficiency was not available");
+  }
+
+  if (quest) {
+    const tripWord = record.trips === 1 ? "trip" : "trips";
+    if (quest.status === "Completed") {
+      supports.unshift(`${record.trips} ${tripWord} toward a completed quest`);
+    } else if (quest.status === "Active") {
+      supports.unshift(`${record.trips} ${tripWord} toward an active quest`);
+    } else if (quest.status === "Failed") {
+      cautions.unshift("the overlapping quest ultimately finished short");
+    }
+  }
+
+  const positiveEffectPhrases = [
+    ["shop_and_deliver", "Shop and Deliver noted in the order mix"],
+    ["high_demand", "high demand tagged"],
+    ["good_orders", "good orders tagged"],
+    ["delivery_heavy", "a delivery-heavy order mix"],
+    ["mixed_orders", "a mixed order profile"],
+  ];
+  const cautionEffectPhrases = [
+    ["low_demand", "low demand was tagged"],
+    ["bad_orders", "bad orders were tagged"],
+    ["app_issues", "app issues were tagged"],
+    ["phone_hotspot_issues", "connectivity issues were tagged"],
+    ["low_battery", "low battery was tagged"],
+    ["snow", "snow was tagged"],
+    ["rain", "rain was tagged"],
+  ];
+
+  const positiveEffect = positiveEffectPhrases.find(([tag]) => tags.has(tag));
+  const cautionEffect = cautionEffectPhrases.find(([tag]) => tags.has(tag));
+  if (positiveEffect) {
+    supports.push(positiveEffect[1]);
+  }
+  if (cautionEffect) {
+    cautions.push(cautionEffect[1]);
+  }
+
+  if (hasRealWorkShortfall) {
+    cautions.unshift("real work was shorter than Uber online time");
+  }
+
+  const support = supports[0] || null;
+  const caution = cautions[0] || null;
+  if (!support && !caution) {
+    return null;
+  }
+
+  const opening = support
+    ? `${onlineSignal.opening} with ${support}`
+    : onlineSignal.opening;
+
+  return `${opening}${caution ? `, while ${caution}` : ""}.`;
+}
+
+function getMileageLabelFromRate(earningsPerWorkMile) {
+  if (
+    earningsPerWorkMile === null ||
+    earningsPerWorkMile === undefined ||
+    Number.isNaN(Number(earningsPerWorkMile))
+  ) {
+    return "Mileage not logged";
+  }
+
+  if (earningsPerWorkMile >= 1.5) return "Strong mileage";
+  if (earningsPerWorkMile >= 1) return "Solid mileage";
+  if (earningsPerWorkMile >= 0.75) return "Questionable mileage";
+  return "Weak mileage";
+}
+
+function buildWeeklyPatternSentence(records, onlineHourly, realHourly, trackingWarningCount) {
+  if (!Array.isArray(records) || records.length === 0) {
+    return null;
+  }
+
+  if (trackingWarningCount > 0) {
+    const dayWord = trackingWarningCount === 1 ? "day has" : "days have";
+    return (
+      `${trackingWarningCount} ${dayWord} real-work time shorter than Uber ` +
+      "online time, so its session or break tracking may need review."
+    );
+  }
+
+  const totalEarnings = records.reduce(
+    (total, record) => total + record.total_earnings,
+    0
+  );
+  const standoutRecord = [...records].sort(
+    (left, right) => right.total_earnings - left.total_earnings
+  )[0];
+  const standoutShare =
+    totalEarnings > 0 ? standoutRecord.total_earnings / totalEarnings : 0;
+
+  if (records.length >= 3 && standoutShare > 0.4) {
+    const standoutDay = new Date(
+      `${standoutRecord.date}T00:00:00`
+    ).toLocaleDateString("en-US", { weekday: "long" });
+    return (
+      `${standoutDay} produced ${Math.round(standoutShare * 100)}% of weekly ` +
+      "earnings and was the standout day."
+    );
+  }
+
+  const hourlyGapRate =
+    onlineHourly > 0 && realHourly !== null && realHourly !== undefined
+      ? (onlineHourly - realHourly) / onlineHourly
+      : null;
+  if (hourlyGapRate !== null && Math.abs(hourlyGapRate) >= 0.15) {
+    if (hourlyGapRate > 0) {
+      return (
+        `Real-work hourly was ${Math.round(hourlyGapRate * 100)}% below online ` +
+        "hourly after including additional tracked work time."
+      );
+    }
+
+    return (
+      `Real-work hourly was ${Math.round(Math.abs(hourlyGapRate) * 100)}% above ` +
+      "online hourly after break-adjusted time."
+    );
+  }
+
+  const effectCounts = new Map();
+  records.forEach((record) => {
+    (record.day_tags || [])
+      .filter((tag) => tag !== "quest_day")
+      .forEach((tag) => {
+        effectCounts.set(tag, (effectCounts.get(tag) || 0) + 1);
+      });
+  });
+  const effectPriority = [
+    "dead_zone",
+    "shop_and_deliver",
+    "heavy_traffic",
+    "high_demand",
+    "low_demand",
+    "good_orders",
+    "bad_orders",
+  ];
+  const repeatedEffect = [...effectCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+
+      const leftPriority = effectPriority.indexOf(left[0]);
+      const rightPriority = effectPriority.indexOf(right[0]);
+      return (
+        (leftPriority === -1 ? effectPriority.length : leftPriority) -
+        (rightPriority === -1 ? effectPriority.length : rightPriority)
+      );
+    })[0];
+
+  if (repeatedEffect) {
+    const [tag, count] = repeatedEffect;
+    return (
+      `${getDayTagLabel(tag)} was the most repeated effect, tagged on ${count} ` +
+      `of ${records.length} active days.`
+    );
+  }
+
+  if (records.length === 1) {
+    return "Only one active day was logged this week.";
+  }
+
+  const meanDailyEarnings = totalEarnings / records.length;
+  const variance =
+    records.reduce(
+      (total, record) =>
+        total + Math.pow(record.total_earnings - meanDailyEarnings, 2),
+      0
+    ) / records.length;
+  const coefficientOfVariation =
+    meanDailyEarnings > 0 ? Math.sqrt(variance) / meanDailyEarnings : 0;
+
+  if (coefficientOfVariation <= 0.2) {
+    return `Daily earnings were consistent across ${records.length} active days.`;
+  }
+  if (coefficientOfVariation >= 0.35) {
+    return `Daily earnings were uneven across ${records.length} active days.`;
+  }
+
+  return null;
+}
+
+// Weekly counterpart to the daily recap. It stays narrow: one verdict, the
+// dominant earnings source plus quest state, and at most one internal
+// week-pattern observation.
+function buildWeeklyQuickRecap({
+  activeDays,
+  totalEarnings,
+  onlineHourly,
+  realHourly,
+  earningsPerWorkMile,
+  fareShare,
+  tipShare,
+  promoShare,
+  questStatus,
+  records,
+  trackingWarningCount,
+}) {
+  if (activeDays === 0 || totalEarnings <= 0) {
+    return null;
+  }
+
+  const hourlyBasis = realHourly !== null && realHourly !== undefined
+    ? "Real-work"
+    : "Online";
+  const hourlyLabel = getHourlyLabelFromRate(realHourly ?? onlineHourly);
+  const hourlySignal = HOURLY_RECAP_SIGNALS[hourlyLabel];
+  const mileageLabel = getMileageLabelFromRate(earningsPerWorkMile);
+  const mileageSignals = {
+    "Strong mileage": { rank: 3, adjective: "strong" },
+    "Solid mileage": { rank: 2, adjective: "solid" },
+    "Questionable mileage": { rank: 1, adjective: "borderline" },
+    "Weak mileage": { rank: 0, adjective: "weak" },
+    "Mileage not logged": { rank: -1, adjective: "unavailable" },
+  };
+  const mileageSignal = mileageSignals[mileageLabel];
+
+  let verdict = "Acceptable week";
+  if (hourlySignal.rank >= 3 && mileageSignal.rank >= 2) {
+    verdict = "Strong week";
+  } else if (hourlySignal.rank >= 3 && mileageSignal.rank >= 0) {
+    verdict = "High-hourly but mileage-heavy week";
+  } else if (hourlySignal.rank >= 2 && mileageSignal.rank >= 2) {
+    verdict = "Good week";
+  } else if (hourlySignal.rank <= 1 || mileageSignal.rank === 0) {
+    verdict = "Weak week";
+  } else if (hourlySignal.rank >= 3 && mileageSignal.rank === -1) {
+    verdict = "Good week by hourly performance";
+  }
+
+  const verdictSentence =
+    `${verdict}: ${hourlyBasis} hourly was ${hourlySignal.adjective} and ` +
+    `mileage efficiency was ${mileageSignal.adjective}.`;
+
+  const dominantShare = [
+    { key: "fare", label: "Net fare", share: fareShare },
+    { key: "tips", label: "Tips", share: tipShare },
+    { key: "promotions", label: "Promotions", share: promoShare },
+  ].sort((left, right) => right.share - left.share)[0];
+  const dominantPercent = Math.round(dominantShare.share * 100);
+
+  let reasonClause;
+  if (dominantShare.key === "tips" && dominantShare.share >= 0.5) {
+    reasonClause = `Tips carried ${dominantPercent}% of earnings`;
+  } else if (dominantShare.key === "promotions" && dominantShare.share >= 0.5) {
+    reasonClause = `Promotions supplied ${dominantPercent}% of earnings`;
+  } else {
+    reasonClause =
+      `${dominantShare.label} was the largest earnings source at ` +
+      `${dominantPercent}%`;
+  }
+
+  const questClauses = {
+    Completed: "the overlapping quest was completed",
+    Active: "the overlapping quest remains active",
+    Failed: "the overlapping quest finished short",
+    Scheduled: "an overlapping quest is scheduled",
+  };
+  const questClause = questClauses[questStatus] || null;
+  const reasonSentence =
+    `${reasonClause}${questClause ? `, and ${questClause}` : ""}.`;
+  const patternSentence = buildWeeklyPatternSentence(
+    records,
+    onlineHourly,
+    realHourly,
+    trackingWarningCount
+  );
+
+  return [verdictSentence, reasonSentence, patternSentence]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function easeOutCubic(t) {
@@ -639,6 +1044,12 @@ function App() {
   const [walletFloor, setWalletFloor] = useState(null);
   const [isEditingWalletFloor, setIsEditingWalletFloor] = useState(false);
   const [walletFloorInput, setWalletFloorInput] = useState("");
+  const [quests, setQuests] = useState([]);
+  const [isQuestManagerOpen, setIsQuestManagerOpen] = useState(false);
+  const [editingQuestId, setEditingQuestId] = useState(null);
+  const [questForm, setQuestForm] = useState(() => createEmptyQuestForm());
+  const [questError, setQuestError] = useState("");
+  const [isSavingQuest, setIsSavingQuest] = useState(false);
 
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
@@ -1079,11 +1490,41 @@ function App() {
     return total + record.real_work_hours;
   }, 0);
 
+  const weeklyBreakHours = weeklyRecords.reduce((total, record) => {
+    if (record.break_hours === null) {
+      return total;
+    }
+
+    return total + record.break_hours;
+  }, 0);
+
   const weeklyEarningsPerWorkMile =
     weeklyWorkMiles > 0 ? weeklyTotalEarnings / weeklyWorkMiles : null;
 
   const weeklyEarningsPerRealHour =
     weeklyRealWorkHours > 0 ? weeklyTotalEarnings / weeklyRealWorkHours : null;
+
+  const weeklyMileageTrackingComplete =
+    weeklyRecords.length > 0 &&
+    weeklyRecords.every(
+      (record) => record.work_miles !== null && record.work_miles !== undefined
+    );
+
+  const weeklyRealWorkTrackingComplete =
+    weeklyRecords.length > 0 &&
+    weeklyRecords.every(
+      (record) =>
+        record.real_work_hours !== null &&
+        record.real_work_hours !== undefined
+    );
+
+  const weeklyTrackingWarningCount = weeklyRecords.filter(
+    (record) =>
+      record.real_work_hours !== null &&
+      record.real_work_hours !== undefined &&
+      record.online_hours - record.real_work_hours >=
+        REAL_WORK_WARNING_TOLERANCE_HOURS
+  ).length;
 
   const currentWeekData = selectedWeekStart
     ? weeks.find((week) => week.week_start === selectedWeekStart)
@@ -1107,6 +1548,14 @@ function App() {
       ? null
       : weeklyRealWorkHours > 0
         ? weeklyRealWorkHours
+        : null;
+
+  const displayedBreakHours = selectedRecordIsInVisibleWeek
+    ? selectedRecord.break_hours
+    : selectedEmptyDayIsInVisibleWeek
+      ? null
+      : weeklyBreakHours > 0
+        ? weeklyBreakHours
         : null;
 
   const displayedTrips = selectedRecordIsInVisibleWeek
@@ -1231,7 +1680,7 @@ function App() {
     new Set(
       dailyRecords.flatMap((record) => [
         record.hourly_label,
-        record.promo_label,
+        getVisiblePromoLabel(record),
         record.mileage_label,
       ])
     )
@@ -1240,7 +1689,11 @@ function App() {
     .sort((a, b) => a.localeCompare(b));
 
   function getRecordStatusLabels(record) {
-    return [record.hourly_label, record.promo_label, record.mileage_label].filter(Boolean);
+    return [
+      record.hourly_label,
+      getVisiblePromoLabel(record),
+      record.mileage_label,
+    ].filter(Boolean);
   }
 
   function getRecordWorkMileValue(record) {
@@ -1394,10 +1847,97 @@ function App() {
       ? new Date(`${weeklyChartData[0].date}T00:00:00`)
       : null;
 
+  const selectedRealWorkShortfall =
+    selectedRecordIsInVisibleWeek &&
+    selectedRecord.real_work_hours !== null &&
+    selectedRecord.real_work_hours !== undefined
+      ? selectedRecord.online_hours - selectedRecord.real_work_hours
+      : null;
+
+  const shouldWarnRealWorkShortfall =
+    selectedRealWorkShortfall !== null &&
+    selectedRealWorkShortfall >= REAL_WORK_WARNING_TOLERANCE_HOURS;
+
   const weekEndDate =
     weeklyChartData.length > 0
       ? new Date(`${weeklyChartData[6].date}T00:00:00`)
       : null;
+
+  const visibleWeekQuests =
+    weeklyChartData.length > 0
+      ? quests
+          .filter(
+            (quest) =>
+              quest.end_date >= weeklyChartData[0].date &&
+              quest.start_date <= weeklyChartData[6].date
+          )
+          .sort((left, right) => {
+            const priority = {
+              Active: 0,
+              Scheduled: 1,
+              Completed: 2,
+              Failed: 3,
+            };
+            return priority[left.status] - priority[right.status];
+          })
+      : [];
+
+  const selectedDayQuests = isSelectedDayMode
+    ? visibleWeekQuests.filter(
+        (quest) =>
+          quest.start_date <= selectedRecordDate &&
+          quest.end_date >= selectedRecordDate
+      )
+    : [];
+  const questPanelQuests = isSelectedDayMode
+    ? selectedDayQuests
+    : visibleWeekQuests;
+  const featuredQuest = questPanelQuests[0] || null;
+  const selectedRecordQuest = selectedRecord
+    ? quests
+        .filter(
+          (quest) =>
+            quest.start_date <= selectedRecord.date &&
+            quest.end_date >= selectedRecord.date
+        )
+        .sort((left, right) => {
+          const priority = {
+            Active: 0,
+            Completed: 1,
+            Failed: 2,
+            Scheduled: 3,
+          };
+          return priority[left.status] - priority[right.status];
+        })[0] || null
+    : null;
+  const selectedDayQuickRecap = buildDailyQuickRecap(
+    selectedRecord,
+    selectedRecordQuest,
+    shouldWarnRealWorkShortfall
+  );
+  const weeklyRecapQuest =
+    ["Completed", "Active", "Failed", "Scheduled"]
+      .map((status) =>
+        visibleWeekQuests.find((quest) => quest.status === status)
+      )
+      .find(Boolean) || null;
+  const weeklyQuickRecap = buildWeeklyQuickRecap({
+    activeDays: weeklyRecords.length,
+    totalEarnings: weeklyTotalEarnings,
+    onlineHourly: weeklyAverageHourly,
+    realHourly: weeklyRealWorkTrackingComplete
+      ? weeklyEarningsPerRealHour
+      : null,
+    earningsPerWorkMile: weeklyMileageTrackingComplete
+      ? weeklyEarningsPerWorkMile
+      : null,
+    fareShare: weeklyFareShare,
+    tipShare: weeklyTipShare,
+    promoShare: weeklyPromoShare,
+    questStatus: weeklyRecapQuest?.status || null,
+    records: weeklyRecords,
+    trackingWarningCount: weeklyTrackingWarningCount,
+  });
 
   async function fetchDashboardData() {
     try {
@@ -1406,18 +1946,26 @@ function App() {
       const summaryResponse = await fetch(`${API_BASE_URL}/api/summary`);
       const dailyResponse = await fetch(`${API_BASE_URL}/api/daily`);
       const weeksResponse = await fetch(`${API_BASE_URL}/api/weeks`);
+      const questsResponse = await fetch(`${API_BASE_URL}/api/quests`);
 
-      if (!summaryResponse.ok || !dailyResponse.ok || !weeksResponse.ok) {
+      if (
+        !summaryResponse.ok ||
+        !dailyResponse.ok ||
+        !weeksResponse.ok ||
+        !questsResponse.ok
+      ) {
         throw new Error("Failed to fetch dashboard data.");
       }
 
       const summaryData = await summaryResponse.json();
       const dailyData = await dailyResponse.json();
       const weeksData = await weeksResponse.json();
+      const questsData = await questsResponse.json();
 
       setSummary(summaryData);
       setDailyRecords(dailyData);
       setWeeks(weeksData);
+      setQuests(questsData);
     } catch (err) {
       setError(err.message);
     }
@@ -1453,6 +2001,141 @@ function App() {
       setIsEditingWalletFloor(false);
     } catch {
       // Leave the edit UI open so the user can retry.
+    }
+  }
+
+  function openQuestManager(quest = null) {
+    setIsQuestManagerOpen(true);
+    setQuestError("");
+
+    if (quest) {
+      setEditingQuestId(quest.id);
+      setQuestForm({
+        start_date: quest.start_date,
+        end_date: quest.end_date,
+        first_tier_trips: String(quest.first_tier_trips),
+        first_tier_bonus: String(quest.first_tier_bonus),
+        final_tier_trips: String(quest.final_tier_trips),
+        final_additional_bonus: String(quest.final_additional_bonus),
+      });
+    } else {
+      setEditingQuestId(null);
+      setQuestForm(createEmptyQuestForm());
+    }
+  }
+
+  function closeQuestManager() {
+    if (isSavingQuest) {
+      return;
+    }
+    setIsQuestManagerOpen(false);
+    setEditingQuestId(null);
+    setQuestForm(createEmptyQuestForm());
+    setQuestError("");
+  }
+
+  function handleQuestInputChange(event) {
+    const { name, value } = event.target;
+    setQuestForm((currentForm) => ({ ...currentForm, [name]: value }));
+  }
+
+  async function handleQuestSubmit(event) {
+    event.preventDefault();
+    setQuestError("");
+
+    if (Object.values(questForm).some((value) => String(value).trim() === "")) {
+      setQuestError("Complete every quest field.");
+      return;
+    }
+
+    const payload = {
+      start_date: questForm.start_date,
+      end_date: questForm.end_date,
+      first_tier_trips: Number(questForm.first_tier_trips),
+      first_tier_bonus: Number(questForm.first_tier_bonus),
+      final_tier_trips: Number(questForm.final_tier_trips),
+      final_additional_bonus: Number(questForm.final_additional_bonus),
+    };
+
+    if (!payload.start_date || !payload.end_date) {
+      setQuestError("Enter both quest dates.");
+      return;
+    }
+    if (
+      !Number.isFinite(payload.first_tier_trips) ||
+      !Number.isFinite(payload.first_tier_bonus) ||
+      !Number.isFinite(payload.final_tier_trips) ||
+      !Number.isFinite(payload.final_additional_bonus)
+    ) {
+      setQuestError("Quest requirements and bonuses must be valid numbers.");
+      return;
+    }
+    if (payload.end_date < payload.start_date) {
+      setQuestError("Quest end date cannot be earlier than its start date.");
+      return;
+    }
+    if (payload.first_tier_trips <= 0) {
+      setQuestError("First-tier trips must be greater than 0.");
+      return;
+    }
+    if (payload.final_tier_trips <= payload.first_tier_trips) {
+      setQuestError("Final-tier trips must be greater than first-tier trips.");
+      return;
+    }
+    if (payload.first_tier_bonus < 0 || payload.final_additional_bonus < 0) {
+      setQuestError("Quest bonuses cannot be negative.");
+      return;
+    }
+
+    setIsSavingQuest(true);
+    try {
+      const response = await fetch(
+        editingQuestId
+          ? `${API_BASE_URL}/api/quests/${editingQuestId}`
+          : `${API_BASE_URL}/api/quests`,
+        {
+          method: editingQuestId ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Unable to save quest.");
+      }
+
+      await fetchDashboardData();
+      setEditingQuestId(null);
+      setQuestForm(createEmptyQuestForm());
+      setSuccessMessage(editingQuestId ? "Quest updated." : "Quest created.");
+    } catch (err) {
+      setQuestError(err.message);
+    } finally {
+      setIsSavingQuest(false);
+    }
+  }
+
+  async function handleDeleteQuest(questId) {
+    if (!window.confirm("Delete this quest? Daily logs will not be affected.")) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/quests/${questId}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Unable to delete quest.");
+      }
+      if (editingQuestId === questId) {
+        setEditingQuestId(null);
+        setQuestForm(createEmptyQuestForm());
+      }
+      await fetchDashboardData();
+      setSuccessMessage("Quest deleted.");
+    } catch (err) {
+      setQuestError(err.message);
     }
   }
 
@@ -1576,9 +2259,61 @@ function App() {
     }));
   }
 
+  function addWorkSession() {
+    setFormData((currentFormData) => ({
+      ...currentFormData,
+      work_sessions: [
+        ...(currentFormData.work_sessions || []),
+        createEmptyWorkSession(),
+      ],
+    }));
+  }
+
+  function updateWorkSession(index, field, value) {
+    setFormData((currentFormData) => ({
+      ...currentFormData,
+      work_sessions: currentFormData.work_sessions.map((session, sessionIndex) =>
+        sessionIndex === index ? { ...session, [field]: value } : session
+      ),
+    }));
+  }
+
+  function removeWorkSession(index) {
+    if (index === 0) {
+      return;
+    }
+    setFormData((currentFormData) => ({
+      ...currentFormData,
+      work_sessions: currentFormData.work_sessions.filter(
+        (_, sessionIndex) => sessionIndex !== index
+      ),
+    }));
+  }
+
+  function addBreakSession() {
+    setFormData((currentFormData) => ({
+      ...currentFormData,
+      breaks: [...(currentFormData.breaks || []), createEmptyBreak()],
+    }));
+  }
+
+  function updateBreakSession(index, field, value) {
+    setFormData((currentFormData) => ({
+      ...currentFormData,
+      breaks: currentFormData.breaks.map((session, sessionIndex) =>
+        sessionIndex === index ? { ...session, [field]: value } : session
+      ),
+    }));
+  }
+
+  function removeBreakSession(index) {
+    setFormData((currentFormData) => ({
+      ...currentFormData,
+      breaks: currentFormData.breaks.filter((_, sessionIndex) => sessionIndex !== index),
+    }));
+  }
+
   function handleEdit(record) {
-    const workStartTime = splitStoredTime(record.work_start_time);
-    const uberStopTime = splitStoredTime(record.uber_stop_time);
     const homeEndTime = splitStoredTime(record.home_end_time);
 
     setEditingDate(record.date);
@@ -1593,15 +2328,7 @@ function App() {
       tips: String(record.tips),
       promotions: String(record.promotions),
 
-      start_odometer: formNumber(record.start_odometer),
-      end_work_odometer: formNumber(record.end_work_odometer),
       end_home_odometer: formNumber(record.end_home_odometer),
-
-      work_start_time_value: workStartTime.timeValue,
-      work_start_time_meridiem: workStartTime.meridiem,
-
-      uber_stop_time_value: uberStopTime.timeValue,
-      uber_stop_time_meridiem: uberStopTime.meridiem,
 
       home_end_time_value: homeEndTime.timeValue,
       home_end_time_meridiem: homeEndTime.meridiem,
@@ -1610,15 +2337,40 @@ function App() {
       notes: record.notes || "",
 
       day_tags: record.day_tags || [],
+      breaks: (record.breaks || []).map((session) => {
+        const startTime = splitStoredTime(session.start_time);
+        const endTime = splitStoredTime(session.end_time);
+        return {
+          start_time_value: startTime.timeValue,
+          start_time_meridiem: startTime.meridiem,
+          end_time_value: endTime.timeValue,
+          end_time_meridiem: endTime.meridiem,
+          start_odometer: formNumber(session.start_odometer),
+          end_odometer: formNumber(session.end_odometer),
+        };
+      }),
+      work_sessions:
+        (record.work_sessions || []).length > 0
+          ? record.work_sessions.map((session) => {
+              const startTime = splitStoredTime(session.start_time);
+              const stopTime = splitStoredTime(session.stop_time);
+              return {
+                start_time_value: startTime.timeValue,
+                start_time_meridiem: startTime.meridiem,
+                stop_time_value: stopTime.timeValue,
+                stop_time_meridiem: stopTime.meridiem,
+                start_odometer: formNumber(session.start_odometer),
+                stop_odometer: formNumber(session.stop_odometer),
+              };
+            })
+          : [createEmptyWorkSession()],
     });
 
     setShowAdvancedTracking(
-      record.start_odometer !== null ||
-        record.end_work_odometer !== null ||
+      (record.work_sessions || []).length > 0 ||
         record.end_home_odometer !== null ||
-        record.work_start_time !== null ||
-        record.uber_stop_time !== null ||
-        record.home_end_time !== null
+        record.home_end_time !== null ||
+        (record.breaks || []).length > 0
     );
 
     // Auto-expand Day Effects only if this record already has tags, so
@@ -1657,6 +2409,20 @@ function App() {
       return;
     }
 
+    const workSessionPayloads = formData.work_sessions.map((session) => ({
+      start_time: combineTimeInput(
+        session.start_time_value,
+        session.start_time_meridiem
+      ),
+      stop_time: combineTimeInput(
+        session.stop_time_value,
+        session.stop_time_meridiem
+      ),
+      start_odometer: optionalNumber(session.start_odometer),
+      stop_odometer: optionalNumber(session.stop_odometer),
+    }));
+    const firstWorkSession = workSessionPayloads[0];
+
     const newRecord = {
       date: formData.date,
       online_hours: onlineHoursResult.decimalHours,
@@ -1667,22 +2433,33 @@ function App() {
 
       miles_driven: null,
 
-      start_odometer: optionalNumber(formData.start_odometer),
-      end_work_odometer: optionalNumber(formData.end_work_odometer),
+      start_odometer: firstWorkSession.start_odometer,
+      end_work_odometer: firstWorkSession.stop_odometer,
       end_home_odometer: optionalNumber(formData.end_home_odometer),
 
-      work_start_time: combineTimeInput(
-        formData.work_start_time_value,
-        formData.work_start_time_meridiem
-      ),
-      uber_stop_time: combineTimeInput(
-        formData.uber_stop_time_value,
-        formData.uber_stop_time_meridiem
-      ),
+      work_start_time: firstWorkSession.start_time,
+      uber_stop_time: firstWorkSession.stop_time,
       home_end_time: combineTimeInput(
         formData.home_end_time_value,
         formData.home_end_time_meridiem
       ),
+      additional_sessions:
+        workSessionPayloads.length > 1 ? workSessionPayloads.slice(1) : null,
+      breaks:
+        formData.breaks.length > 0
+          ? formData.breaks.map((session) => ({
+              start_time: combineTimeInput(
+                session.start_time_value,
+                session.start_time_meridiem
+              ),
+              end_time: combineTimeInput(
+                session.end_time_value,
+                session.end_time_meridiem
+              ),
+              start_odometer: optionalNumber(session.start_odometer),
+              end_odometer: optionalNumber(session.end_odometer),
+            }))
+          : null,
 
       wallet_balance: optionalNumber(formData.wallet_balance),
       notes: optionalText(formData.notes),
@@ -1718,123 +2495,245 @@ function App() {
       return;
     }
 
-    if (newRecord.start_odometer !== null && newRecord.start_odometer < 0) {
-      setError("Start odometer cannot be negative.");
-      return;
-    }
-
-    if (
-      newRecord.end_work_odometer !== null &&
-      newRecord.end_work_odometer < 0
-    ) {
-      setError("End Uber/work odometer cannot be negative.");
-      return;
-    }
-
     if (newRecord.end_home_odometer !== null && newRecord.end_home_odometer < 0) {
       setError("End home odometer cannot be negative.");
       return;
     }
 
-    if (
-      newRecord.start_odometer !== null &&
-      newRecord.end_work_odometer !== null &&
-      newRecord.end_work_odometer < newRecord.start_odometer
-    ) {
-      setError("End Uber/work odometer cannot be lower than start odometer.");
+    if (!isValidTimeValue(formData.home_end_time_value)) {
+      setError("Home/end time must look like 5, 5:30, or 12:05 with AM/PM selected.");
       return;
     }
 
-    if (
-      newRecord.start_odometer !== null &&
-      newRecord.end_home_odometer !== null &&
-      newRecord.end_home_odometer < newRecord.start_odometer
-    ) {
-      setError("End home odometer cannot be lower than start odometer.");
-      return;
-    }
-
-    if (
-      newRecord.end_work_odometer !== null &&
-      newRecord.end_home_odometer !== null &&
-      newRecord.end_home_odometer < newRecord.end_work_odometer
-    ) {
-      setError("End home odometer cannot be lower than end Uber/work odometer.");
-      return;
-    }
-
-    if (formData.end_work_odometer !== "" && formData.start_odometer === "") {
-      setError("Start odometer is required when end Uber/work odometer is entered.");
-      return;
-    }
-
-    if (formData.end_home_odometer !== "" && formData.start_odometer === "") {
-      setError("Start odometer is required when end home odometer is entered.");
-      return;
-    }
-
-    if (formData.end_home_odometer !== "" && formData.end_work_odometer === "") {
-      setError("End Uber/work odometer is required when end home odometer is entered.");
-      return;
-    }
-
-    if (
-      !isValidTimeValue(formData.work_start_time_value) ||
-      !isValidTimeValue(formData.uber_stop_time_value) ||
-      !isValidTimeValue(formData.home_end_time_value)
-    ) {
-      setError("Times must look like 5, 5:30, or 12:05 with AM/PM selected.");
-      return;
-    }
-
-    if (
-      formData.uber_stop_time_value !== "" &&
-      formData.work_start_time_value === ""
-    ) {
-      setError("Work start time is required when Uber stop time is entered.");
-      return;
-    }
-
-    if (
-      formData.home_end_time_value !== "" &&
-      (formData.work_start_time_value === "" ||
-        formData.uber_stop_time_value === "")
-    ) {
-      setError(
-        "Work start time and Uber stop time are required when home/end time is entered."
-      );
-      return;
-    }
-
-    const workStartMinutes = timeToMinutes(
-      formData.work_start_time_value,
-      formData.work_start_time_meridiem
-    );
-    const uberStopMinutes = timeToMinutes(
-      formData.uber_stop_time_value,
-      formData.uber_stop_time_meridiem
-    );
     const homeEndMinutes = timeToMinutes(
       formData.home_end_time_value,
       formData.home_end_time_meridiem
     );
 
-    if (
-      workStartMinutes !== null &&
-      uberStopMinutes !== null &&
-      uberStopMinutes <= workStartMinutes
-    ) {
-      setError("Uber stop time must be later than work start time.");
-      return;
+    const sessionRanges = [];
+    let previousSessionStop = null;
+    let previousSessionStopOdometer = null;
+    for (let index = 0; index < formData.work_sessions.length; index += 1) {
+      const session = formData.work_sessions[index];
+      const savedSession = workSessionPayloads[index];
+      const sessionNumber = index + 1;
+      const hasAnyValue = [
+        session.start_time_value,
+        session.stop_time_value,
+        session.start_odometer,
+        session.stop_odometer,
+      ].some((value) => value !== "");
+
+      if (!hasAnyValue && index === 0 && formData.work_sessions.length === 1) {
+        continue;
+      }
+      if (session.start_time_value === "" || session.stop_time_value === "") {
+        setError(`Complete session ${sessionNumber} start and stop times.`);
+        return;
+      }
+      if (
+        !isValidTimeValue(session.start_time_value) ||
+        !isValidTimeValue(session.stop_time_value)
+      ) {
+        setError(
+          `Session ${sessionNumber} times must look like 5, 5:30, or 12:05 with AM/PM selected.`
+        );
+        return;
+      }
+
+      const startMinutes = timeToMinutes(
+        session.start_time_value,
+        session.start_time_meridiem
+      );
+      const stopMinutes = timeToMinutes(
+        session.stop_time_value,
+        session.stop_time_meridiem
+      );
+      if (stopMinutes <= startMinutes) {
+        setError(`Session ${sessionNumber} stop time must be later than its start.`);
+        return;
+      }
+      if (previousSessionStop !== null && startMinutes < previousSessionStop) {
+        setError("Work sessions cannot overlap and must be entered in time order.");
+        return;
+      }
+
+      if ((session.start_odometer === "") !== (session.stop_odometer === "")) {
+        setError(`Session ${sessionNumber} odometers must be entered together.`);
+        return;
+      }
+      if (
+        savedSession.start_odometer !== null &&
+        (savedSession.start_odometer < 0 || savedSession.stop_odometer < 0)
+      ) {
+        setError(`Session ${sessionNumber} odometers cannot be negative.`);
+        return;
+      }
+      if (
+        savedSession.start_odometer !== null &&
+        savedSession.stop_odometer < savedSession.start_odometer
+      ) {
+        setError(
+          `Session ${sessionNumber} stop odometer cannot be lower than its start.`
+        );
+        return;
+      }
+      if (
+        savedSession.start_odometer !== null &&
+        previousSessionStopOdometer !== null &&
+        savedSession.start_odometer < previousSessionStopOdometer
+      ) {
+        setError("Session odometers must stay in trip order.");
+        return;
+      }
+
+      sessionRanges.push({
+        startMinutes,
+        stopMinutes,
+        startOdometer: savedSession.start_odometer,
+        stopOdometer: savedSession.stop_odometer,
+      });
+      previousSessionStop = stopMinutes;
+      if (savedSession.stop_odometer !== null) {
+        previousSessionStopOdometer = savedSession.stop_odometer;
+      }
+    }
+
+    let previousBreakEnd = null;
+    let previousBreakEndOdometer = null;
+    for (let index = 0; index < formData.breaks.length; index += 1) {
+      const session = formData.breaks[index];
+      const breakNumber = index + 1;
+
+      if (session.start_time_value === "" || session.end_time_value === "") {
+        setError(`Complete or remove break ${breakNumber}.`);
+        return;
+      }
+
+      if (
+        !isValidTimeValue(session.start_time_value) ||
+        !isValidTimeValue(session.end_time_value)
+      ) {
+        setError(
+          `Break ${breakNumber} times must look like 5, 5:30, or 12:05 with AM/PM selected.`
+        );
+        return;
+      }
+
+      const breakStartMinutes = timeToMinutes(
+        session.start_time_value,
+        session.start_time_meridiem
+      );
+      const breakEndMinutes = timeToMinutes(
+        session.end_time_value,
+        session.end_time_meridiem
+      );
+
+      const matchingSession = sessionRanges.find(
+        (sessionRange) =>
+          sessionRange.startMinutes <= breakStartMinutes &&
+          breakStartMinutes < breakEndMinutes &&
+          breakEndMinutes <= sessionRange.stopMinutes
+      );
+      if (!matchingSession) {
+        setError(
+          `Break ${breakNumber} must fall completely inside one work session.`
+        );
+        return;
+      }
+
+      if (previousBreakEnd !== null && breakStartMinutes < previousBreakEnd) {
+        setError("Break sessions cannot overlap and must be entered in time order.");
+        return;
+      }
+      previousBreakEnd = breakEndMinutes;
+
+      const savedSession = newRecord.breaks[index];
+      if (
+        (session.start_odometer === "") !== (session.end_odometer === "")
+      ) {
+        setError(`Break ${breakNumber} odometers must be entered together.`);
+        return;
+      }
+
+      if (
+        savedSession.start_odometer !== null &&
+        (savedSession.start_odometer < 0 || savedSession.end_odometer < 0)
+      ) {
+        setError(`Break ${breakNumber} odometers cannot be negative.`);
+        return;
+      }
+
+      if (
+        savedSession.start_odometer !== null &&
+        (matchingSession.startOdometer === null ||
+          matchingSession.stopOdometer === null)
+      ) {
+        setError(
+          `Session odometers are required for break ${breakNumber} odometers.`
+        );
+        return;
+      }
+
+      if (
+        savedSession.start_odometer !== null &&
+        !(
+          matchingSession.startOdometer <= savedSession.start_odometer &&
+          savedSession.start_odometer <= savedSession.end_odometer &&
+          savedSession.end_odometer <= matchingSession.stopOdometer
+        )
+      ) {
+        setError(
+          `Break ${breakNumber} odometers must be inside the same work session.`
+        );
+        return;
+      }
+
+      if (
+        savedSession.start_odometer !== null &&
+        previousBreakEndOdometer !== null &&
+        savedSession.start_odometer < previousBreakEndOdometer
+      ) {
+        setError("Break odometers cannot overlap and must be entered in trip order.");
+        return;
+      }
+      if (savedSession.end_odometer !== null) {
+        previousBreakEndOdometer = savedSession.end_odometer;
+      }
     }
 
     if (
-      uberStopMinutes !== null &&
-      homeEndMinutes !== null &&
-      homeEndMinutes < uberStopMinutes
+      (homeEndMinutes !== null || newRecord.end_home_odometer !== null) &&
+      sessionRanges.length === 0
     ) {
-      setError("Home/end time cannot be earlier than Uber stop time.");
+      setError("Complete session 1 before entering final home-end details.");
       return;
+    }
+
+    if (sessionRanges.length > 0) {
+      const finalSession = sessionRanges[sessionRanges.length - 1];
+      if (homeEndMinutes !== null && homeEndMinutes < finalSession.stopMinutes) {
+        setError("Home/end time cannot be earlier than the final session stop.");
+        return;
+      }
+      if (
+        newRecord.end_home_odometer !== null &&
+        finalSession.stopOdometer === null
+      ) {
+        setError(
+          "Final-session odometers are required when home-end odometer is entered."
+        );
+        return;
+      }
+      if (
+        newRecord.end_home_odometer !== null &&
+        newRecord.end_home_odometer < finalSession.stopOdometer
+      ) {
+        setError(
+          "Home-end odometer cannot be lower than the final session stop odometer."
+        );
+        return;
+      }
     }
 
     if (newRecord.wallet_balance !== null && newRecord.wallet_balance < 0) {
@@ -2055,7 +2954,7 @@ function App() {
   return (
     <main className="app">
       <section className="hero">
-        <p className="eyebrow">Uber Dashboard v3.3</p>
+        <p className="eyebrow">Uber Dashboard v3.12.1</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -2217,6 +3116,162 @@ function App() {
             </div>
           </div>
 
+          <details className="quest-panel">
+            <summary>
+              {featuredQuest ? (
+                <div className="quest-panel-summary-content">
+                  <div className="quest-summary-title">
+                    <strong>{featuredQuest.title}</strong>
+                    <span
+                      className={`quest-status quest-status-${featuredQuest.status.toLowerCase()}`}
+                    >
+                      {featuredQuest.status}
+                    </span>
+                  </div>
+
+                  <div className="quest-summary-progress">
+                    <span>
+                      {Math.min(featuredQuest.progress_trips, featuredQuest.final_tier_trips)}
+                      {" / "}
+                      {featuredQuest.final_tier_trips} trips
+                    </span>
+                    <span className="quest-progress-track">
+                      <span
+                        className="quest-progress-fill"
+                        style={{
+                          width: `${Math.min(
+                            (featuredQuest.progress_trips /
+                              featuredQuest.final_tier_trips) *
+                              100,
+                            100
+                          )}%`,
+                        }}
+                      ></span>
+                    </span>
+                  </div>
+
+                  <span className="quest-summary-bonus">
+                    ${featuredQuest.total_possible_bonus.toFixed(2)} potential
+                  </span>
+                </div>
+              ) : (
+                <div className="quest-panel-summary-content quest-panel-summary-empty">
+                  <strong>Quests</strong>
+                  <span>
+                    {isSelectedDayMode
+                      ? "None cover this day"
+                      : "None overlap this week"}
+                  </span>
+                </div>
+              )}
+            </summary>
+
+            <div className="quest-panel-body">
+              {questPanelQuests.length > 0 ? (
+                <div className="quest-week-list">
+                  {questPanelQuests.map((quest) => (
+                    <details className="quest-progress-card" key={quest.id}>
+                      <summary className="quest-progress-card-summary">
+                        <div className="quest-progress-card-heading">
+                          <div>
+                            <strong>{quest.title}</strong>
+                            <span>
+                              {formatShortDate(new Date(`${quest.start_date}T00:00:00`))}
+                              {" - "}
+                              {formatShortDate(new Date(`${quest.end_date}T00:00:00`))}
+                            </span>
+                          </div>
+                          <span
+                            className={`quest-status quest-status-${quest.status.toLowerCase()}`}
+                          >
+                            {quest.status}
+                          </span>
+                        </div>
+
+                        <div className="quest-progress-card-total">
+                          <span>
+                            {Math.min(quest.progress_trips, quest.final_tier_trips)}
+                            {" / "}
+                            {quest.final_tier_trips} trips
+                          </span>
+                          <span className="quest-progress-track">
+                            <span
+                              className="quest-progress-fill"
+                              style={{
+                                width: `${Math.min(
+                                  (quest.progress_trips /
+                                    quest.final_tier_trips) *
+                                    100,
+                                  100
+                                )}%`,
+                              }}
+                            ></span>
+                          </span>
+                        </div>
+
+                        <div className="quest-progress-card-bonus-summary">
+                          <span>${quest.earned_bonus.toFixed(2)} earned</span>
+                          <span>
+                            ${quest.total_possible_bonus.toFixed(2)} potential
+                          </span>
+                        </div>
+
+                        <span className="quest-progress-card-chevron" aria-hidden="true">
+                          ▾
+                        </span>
+                      </summary>
+
+                      <div className="quest-progress-card-details">
+                        <div className="quest-tier-grid">
+                          <div>
+                            <span>First tier</span>
+                            <strong>
+                              {Math.min(quest.progress_trips, quest.first_tier_trips)}
+                              {" / "}
+                              {quest.first_tier_trips}
+                            </strong>
+                            <small>
+                              {quest.first_tier_earned
+                                ? `$${quest.first_tier_bonus.toFixed(2)} earned`
+                                : `${quest.first_tier_remaining} trips remaining`}
+                            </small>
+                          </div>
+                          <div>
+                            <span>Final tier</span>
+                            <strong>
+                              {Math.min(quest.progress_trips, quest.final_tier_trips)}
+                              {" / "}
+                              {quest.final_tier_trips}
+                            </strong>
+                            <small>
+                              {quest.final_tier_earned
+                                ? `+$${quest.final_additional_bonus.toFixed(2)} earned`
+                                : `${quest.final_tier_remaining} trips remaining`}
+                            </small>
+                          </div>
+                        </div>
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              ) : (
+                <p className="quest-panel-empty-copy">
+                  {isSelectedDayMode
+                    ? "No quest covers the selected day."
+                    : "No quest overlaps the visible week. Create one now or browse to a week containing a saved quest."}
+                </p>
+              )}
+
+              <button
+                type="button"
+                className="quest-manage-button"
+                onClick={() => openQuestManager()}
+              >
+                Manage quests
+              </button>
+            </div>
+          </details>
+
           <div className="weekly-bars">
             {weeklyChartData.map((day, index) => {
               const barHeight =
@@ -2283,6 +3338,12 @@ function App() {
                   "—"
                 )}
               </strong>
+              {displayedBreakHours !== null && displayedBreakHours !== undefined && (
+                <span className="break-time-summary">
+                  Break{" "}
+                  <AnimatedNumber value={displayedBreakHours} format={formatHoursAndMinutes} />
+                </span>
+              )}
             </div>
 
             <div>
@@ -2319,6 +3380,24 @@ function App() {
               </strong>
             </div>
           </div>
+
+          {!isSelectedDayMode && weeklyQuickRecap && (
+            <div className="quick-weekly-recap">
+              <strong>Weekly recap</strong>
+              <p>{weeklyQuickRecap}</p>
+            </div>
+          )}
+
+          {shouldWarnRealWorkShortfall && (
+            <div className="time-consistency-warning" role="status">
+              <strong>Check work-session times</strong>
+              <span>
+                Real work is {formatHoursAndMinutes(selectedRealWorkShortfall)} shorter
+                than Uber online time. Real work normally includes additional driving,
+                so a session or break may be incomplete.
+              </span>
+            </div>
+          )}
 
           <div className="earnings-composition-row">
             <div className="earnings-donut-block">
@@ -2489,7 +3568,12 @@ function App() {
                     <div className="selected-day-details">
                       <div className="label-row">
                         <LabelChip label={selectedRecord.hourly_label} record={selectedRecord} />
-                        <LabelChip label={selectedRecord.promo_label} record={selectedRecord} />
+                        {getVisiblePromoLabel(selectedRecord) && (
+                          <LabelChip
+                            label={getVisiblePromoLabel(selectedRecord)}
+                            record={selectedRecord}
+                          />
+                        )}
                         <LabelChip label={selectedRecord.tip_label} record={selectedRecord} />
                         <LabelChip label={selectedRecord.mileage_label} record={selectedRecord} />
                       </div>
@@ -2529,6 +3613,13 @@ function App() {
                     </div>
                   </div>
 
+                  {selectedDayQuickRecap && (
+                    <div className="quick-daily-recap">
+                      <strong>Quick recap:</strong>
+                      <p>{selectedDayQuickRecap}</p>
+                    </div>
+                  )}
+
                   {Array.isArray(selectedRecord.day_tags) && selectedRecord.day_tags.length > 0 && (
                     <div className="day-tag-display-row">
                       {selectedRecord.day_tags.map((tag) => (
@@ -2536,6 +3627,48 @@ function App() {
                       ))}
                     </div>
                   )}
+
+                  {Array.isArray(selectedRecord.work_sessions) &&
+                    selectedRecord.work_sessions.length > 0 && (
+                      <details className="mileage-breakdown">
+                        <summary>Mileage breakdown</summary>
+                        <div className="mileage-breakdown-body">
+                          {selectedRecord.work_sessions.map((session, index) => (
+                            <div className="mileage-breakdown-row" key={index}>
+                              <span>Session {index + 1} gross</span>
+                              <strong>
+                                {session.miles !== null && session.miles !== undefined
+                                  ? `${session.miles.toFixed(1)} miles`
+                                  : "Not fully logged"}
+                              </strong>
+                            </div>
+                          ))}
+
+                          <div className="mileage-breakdown-row mileage-breakdown-excluded">
+                            <span>Break miles excluded</span>
+                            <strong>
+                              {selectedRecord.break_miles !== null &&
+                              selectedRecord.break_miles !== undefined
+                                ? `${selectedRecord.break_miles.toFixed(1)} miles`
+                                : Array.isArray(selectedRecord.breaks) &&
+                                    selectedRecord.breaks.length > 0
+                                  ? "Not tracked"
+                                  : "0.0 miles"}
+                            </strong>
+                          </div>
+
+                          <div className="mileage-breakdown-row mileage-breakdown-total">
+                            <span>Total work miles</span>
+                            <strong>
+                              {selectedRecord.work_miles !== null &&
+                              selectedRecord.work_miles !== undefined
+                                ? `${selectedRecord.work_miles.toFixed(1)} miles`
+                                : "Not fully logged"}
+                            </strong>
+                          </div>
+                        </div>
+                      </details>
+                    )}
 
                   {selectedRecord.notes && (
                     <div className="recap-notes">
@@ -2570,6 +3703,9 @@ function App() {
           <p className="eyebrow">Weekly earnings</p>
           <h2>No weekly data yet</h2>
           <p>Add a daily log to build your first weekly earnings chart.</p>
+          <button type="button" className="quest-manage-button" onClick={() => openQuestManager()}>
+            Manage quests
+          </button>
         </section>
       )}
 
@@ -2623,34 +3759,47 @@ function App() {
               onClick={handleImportButtonClick}
               disabled={isImporting}
             >
-              {isImporting ? "Reading..." : "Import CSV"}
+              {isImporting ? "Reading..." : "Import backup CSV"}
             </button>
 
-            {dailyRecords.length > 0 && (
+            {(dailyRecords.length > 0 || quests.length > 0) && (
               <a
                 className="export-csv-button"
                 href={`${API_BASE_URL}/api/daily/csv`}
               >
-                Export CSV
+                Export backup CSV
               </a>
             )}
           </div>
         </div>
 
-        {error && <p className="error">Error: {error}</p>}
-        {successMessage && <p className="success">{successMessage}</p>}
+        {(error || successMessage) && (
+          <div className="daily-log-notification-area">
+            {error && (
+              <p className="error" role="alert">
+                Error: {error}
+              </p>
+            )}
+            {successMessage && (
+              <p className="success" role="status">
+                {successMessage}
+              </p>
+            )}
+          </div>
+        )}
 
         {importPreview && (
           <div className="import-preview-panel">
             <h3>Import preview</h3>
             <p className="import-preview-summary">
-              <strong>{importPreview.new_count}</strong> new day
-              {importPreview.new_count === 1 ? "" : "s"} will be added,{" "}
-              <strong>{importPreview.update_count}</strong> existing day
-              {importPreview.update_count === 1 ? "" : "s"} will be overwritten
+              Daily logs: <strong>{importPreview.new_count}</strong> new,{" "}
+              <strong>{importPreview.update_count}</strong> overwritten.
+              {" "}Quests: <strong>{importPreview.quest_new_count ?? 0}</strong>{" "}
+              new, <strong>{importPreview.quest_update_count ?? 0}</strong>{" "}
+              updated
               {importPreview.error_count > 0 && (
                 <>
-                  , and <strong>{importPreview.error_count}</strong> row
+                  . <strong>{importPreview.error_count}</strong> row
                   {importPreview.error_count === 1 ? "" : "s"} will be skipped due to errors
                 </>
               )}
@@ -2696,7 +3845,10 @@ function App() {
 
         {importResult && (
           <p className="success">
-            Import complete: {importResult.inserted} added, {importResult.updated} updated
+            Import complete: daily logs {importResult.inserted} added and{" "}
+            {importResult.updated} updated; quests{" "}
+            {importResult.quests_inserted ?? 0} added and{" "}
+            {importResult.quests_updated ?? 0} updated
             {importResult.error_count > 0
               ? `, ${importResult.error_count} row${importResult.error_count === 1 ? "" : "s"} skipped.`
               : "."}
@@ -2877,119 +4029,330 @@ function App() {
 
           {showAdvancedTracking && (
             <div className="advanced-tracking-panel">
-              <div className="advanced-section-heading">
-                <h3>Mileage tracking</h3>
-                <p>
-                  Use odometer readings to calculate work miles, return miles, and
-                  earnings per mile.
-                </p>
+              <div className="work-session-manager">
+                <div className="work-session-manager-header tracking-section-header">
+                  <div>
+                    <h3>Work sessions</h3>
+                    <p>
+                      Session 1 is the normal work period. Add another when you
+                      stop working and go back out later.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="work-session-list">
+                  {formData.work_sessions.map((session, index) => (
+                    <section className="work-session-card" key={index}>
+                      <div className="work-session-card-header">
+                        <strong>Session {index + 1}</strong>
+                        {index > 0 && (
+                          <button
+                            type="button"
+                            className="remove-break-button"
+                            onClick={() => removeWorkSession(index)}
+                            aria-label={`Remove session ${index + 1}`}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="work-session-fields">
+                        <label>
+                          Start time
+                          <div className="time-input-row">
+                            <input
+                              type="text"
+                              value={session.start_time_value}
+                              onChange={(event) =>
+                                updateWorkSession(
+                                  index,
+                                  "start_time_value",
+                                  event.target.value
+                                )
+                              }
+                              placeholder="12:00"
+                            />
+                            <select
+                              value={session.start_time_meridiem}
+                              onChange={(event) =>
+                                updateWorkSession(
+                                  index,
+                                  "start_time_meridiem",
+                                  event.target.value
+                                )
+                              }
+                            >
+                              <option value="AM">AM</option>
+                              <option value="PM">PM</option>
+                            </select>
+                          </div>
+                        </label>
+
+                        <label>
+                          Stop time
+                          <div className="time-input-row">
+                            <input
+                              type="text"
+                              value={session.stop_time_value}
+                              onChange={(event) =>
+                                updateWorkSession(
+                                  index,
+                                  "stop_time_value",
+                                  event.target.value
+                                )
+                              }
+                              placeholder="1:00"
+                            />
+                            <select
+                              value={session.stop_time_meridiem}
+                              onChange={(event) =>
+                                updateWorkSession(
+                                  index,
+                                  "stop_time_meridiem",
+                                  event.target.value
+                                )
+                              }
+                            >
+                              <option value="AM">AM</option>
+                              <option value="PM">PM</option>
+                            </select>
+                          </div>
+                        </label>
+
+                        <label>
+                          Start odometer optional
+                          <input
+                            type="number"
+                            value={session.start_odometer}
+                            onChange={(event) =>
+                              updateWorkSession(
+                                index,
+                                "start_odometer",
+                                event.target.value
+                              )
+                            }
+                            step="0.1"
+                            min="0"
+                          />
+                        </label>
+
+                        <label>
+                          Stop odometer optional
+                          <input
+                            type="number"
+                            value={session.stop_odometer}
+                            onChange={(event) =>
+                              updateWorkSession(
+                                index,
+                                "stop_odometer",
+                                event.target.value
+                              )
+                            }
+                            step="0.1"
+                            min="0"
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  ))}
+                </div>
+
+                <div className="tracking-section-action">
+                  <button
+                    type="button"
+                    className="add-session-button"
+                    onClick={addWorkSession}
+                  >
+                    + Add another session
+                  </button>
+                </div>
               </div>
 
-              <label>
-                Start odometer
-                <input
-                  type="number"
-                  name="start_odometer"
-                  value={formData.start_odometer}
-                  onChange={handleInputChange}
-                  step="0.1"
-                  min="0"
-                />
-              </label>
+              <div className="break-session-manager">
+                <div className="break-session-manager-header tracking-section-header">
+                  <div>
+                    <h3>Breaks</h3>
+                    <p>
+                      Add a session only when you took a break. Time pauses real
+                      work; optional odometers exclude break driving. Each break
+                      must fit inside one work session.
+                    </p>
+                  </div>
+                </div>
 
-              <label>
-                End Uber/work odometer
-                <input
-                  type="number"
-                  name="end_work_odometer"
-                  value={formData.end_work_odometer}
-                  onChange={handleInputChange}
-                  step="0.1"
-                  min="0"
-                />
-              </label>
+                {formData.breaks.length > 0 && (
+                  <div className="break-session-list">
+                    {formData.breaks.map((session, index) => (
+                      <section className="break-session-card" key={index}>
+                        <div className="break-session-card-header">
+                          <strong>Break {index + 1}</strong>
+                          <button
+                            type="button"
+                            className="remove-break-button"
+                            onClick={() => removeBreakSession(index)}
+                            aria-label={`Remove break ${index + 1}`}
+                          >
+                            Remove
+                          </button>
+                        </div>
 
-              <label>
-                End home odometer optional
-                <input
-                  type="number"
-                  name="end_home_odometer"
-                  value={formData.end_home_odometer}
-                  onChange={handleInputChange}
-                  step="0.1"
-                  min="0"
-                />
-              </label>
+                        <div className="break-session-fields">
+                          <label>
+                            Start time
+                            <div className="time-input-row">
+                              <input
+                                type="text"
+                                value={session.start_time_value}
+                                onChange={(event) =>
+                                  updateBreakSession(
+                                    index,
+                                    "start_time_value",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="6:20"
+                              />
+                              <select
+                                value={session.start_time_meridiem}
+                                onChange={(event) =>
+                                  updateBreakSession(
+                                    index,
+                                    "start_time_meridiem",
+                                    event.target.value
+                                  )
+                                }
+                              >
+                                <option value="AM">AM</option>
+                                <option value="PM">PM</option>
+                              </select>
+                            </div>
+                          </label>
 
-              <div className="advanced-section-heading">
-                <h3>Time tracking</h3>
-                <p>
-                  Use normal time plus AM/PM. This version assumes same-day shifts.
-                </p>
+                          <label>
+                            End time
+                            <div className="time-input-row">
+                              <input
+                                type="text"
+                                value={session.end_time_value}
+                                onChange={(event) =>
+                                  updateBreakSession(
+                                    index,
+                                    "end_time_value",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="7:07"
+                              />
+                              <select
+                                value={session.end_time_meridiem}
+                                onChange={(event) =>
+                                  updateBreakSession(
+                                    index,
+                                    "end_time_meridiem",
+                                    event.target.value
+                                  )
+                                }
+                              >
+                                <option value="AM">AM</option>
+                                <option value="PM">PM</option>
+                              </select>
+                            </div>
+                          </label>
+
+                          <label>
+                            Start odometer optional
+                            <input
+                              type="number"
+                              value={session.start_odometer}
+                              onChange={(event) =>
+                                updateBreakSession(
+                                  index,
+                                  "start_odometer",
+                                  event.target.value
+                                )
+                              }
+                              step="0.1"
+                              min="0"
+                            />
+                          </label>
+
+                          <label>
+                            End odometer optional
+                            <input
+                              type="number"
+                              value={session.end_odometer}
+                              onChange={(event) =>
+                                updateBreakSession(
+                                  index,
+                                  "end_odometer",
+                                  event.target.value
+                                )
+                              }
+                              step="0.1"
+                              min="0"
+                            />
+                          </label>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                )}
+
+                <div className="tracking-section-action">
+                  <button
+                    type="button"
+                    className="add-break-button"
+                    onClick={addBreakSession}
+                  >
+                    + Add break
+                  </button>
+                </div>
               </div>
 
-              <label>
-                Work start time
-                <div className="time-input-row">
-                  <input
-                    type="text"
-                    name="work_start_time_value"
-                    value={formData.work_start_time_value}
-                    onChange={handleInputChange}
-                    placeholder="5:30"
-                  />
-                  <select
-                    name="work_start_time_meridiem"
-                    value={formData.work_start_time_meridiem}
-                    onChange={handleInputChange}
-                  >
-                    <option value="AM">AM</option>
-                    <option value="PM">PM</option>
-                  </select>
+              <div className="final-return-section">
+                <div className="advanced-section-heading tracking-section-header">
+                  <h3>Final return home</h3>
+                  <p>
+                    Optional. These apply only after the final work session.
+                  </p>
                 </div>
-              </label>
 
-              <label>
-                Uber stop time
-                <div className="time-input-row">
-                  <input
-                    type="text"
-                    name="uber_stop_time_value"
-                    value={formData.uber_stop_time_value}
-                    onChange={handleInputChange}
-                    placeholder="9:45"
-                  />
-                  <select
-                    name="uber_stop_time_meridiem"
-                    value={formData.uber_stop_time_meridiem}
-                    onChange={handleInputChange}
-                  >
-                    <option value="AM">AM</option>
-                    <option value="PM">PM</option>
-                  </select>
-                </div>
-              </label>
+                <div className="final-return-fields">
+                  <label>
+                    Home/end time
+                    <div className="time-input-row">
+                      <input
+                        type="text"
+                        name="home_end_time_value"
+                        value={formData.home_end_time_value}
+                        onChange={handleInputChange}
+                        placeholder="9:00"
+                      />
+                      <select
+                        name="home_end_time_meridiem"
+                        value={formData.home_end_time_meridiem}
+                        onChange={handleInputChange}
+                      >
+                        <option value="AM">AM</option>
+                        <option value="PM">PM</option>
+                      </select>
+                    </div>
+                  </label>
 
-              <label>
-                Home/end time optional
-                <div className="time-input-row">
-                  <input
-                    type="text"
-                    name="home_end_time_value"
-                    value={formData.home_end_time_value}
-                    onChange={handleInputChange}
-                    placeholder="10:15"
-                  />
-                  <select
-                    name="home_end_time_meridiem"
-                    value={formData.home_end_time_meridiem}
-                    onChange={handleInputChange}
-                  >
-                    <option value="AM">AM</option>
-                    <option value="PM">PM</option>
-                  </select>
+                  <label>
+                    Home-end odometer
+                    <input
+                      type="number"
+                      name="end_home_odometer"
+                      value={formData.end_home_odometer}
+                      onChange={handleInputChange}
+                      step="0.1"
+                      min="0"
+                    />
+                  </label>
                 </div>
-              </label>
+              </div>
             </div>
           )}
 
@@ -3169,7 +4532,12 @@ function App() {
                   <td>
                     <div className="table-labels">
                       <LabelChip label={record.hourly_label} record={record} />
-                      <LabelChip label={record.promo_label} record={record} />
+                      {getVisiblePromoLabel(record) && (
+                        <LabelChip
+                          label={getVisiblePromoLabel(record)}
+                          record={record}
+                        />
+                      )}
                       <LabelChip label={record.mileage_label} record={record} />
                     </div>
                   </td>
@@ -3293,6 +4661,174 @@ function App() {
           </div>
         )}
       </section>
+
+      {isQuestManagerOpen && (
+        <div className="quest-manager-overlay" onClick={closeQuestManager}>
+          <div className="quest-manager-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="quest-manager-header">
+              <div>
+                <h3>Manage quests</h3>
+                <p>Quest progress is calculated automatically from daily trip totals.</p>
+              </div>
+              <button
+                type="button"
+                className="week-browser-close"
+                onClick={closeQuestManager}
+                aria-label="Close quest manager"
+              >
+                ×
+              </button>
+            </div>
+
+            <form className="quest-form" onSubmit={handleQuestSubmit}>
+              <div className="quest-form-heading">
+                <strong>{editingQuestId ? "Edit quest" : "Create quest"}</strong>
+                {editingQuestId && (
+                  <button
+                    type="button"
+                    onClick={() => openQuestManager()}
+                    className="quest-form-reset"
+                  >
+                    Cancel edit
+                  </button>
+                )}
+              </div>
+
+              {questError && <div className="quest-form-error">{questError}</div>}
+
+              <div className="quest-form-grid">
+                <label>
+                  Start date
+                  <input
+                    type="date"
+                    name="start_date"
+                    value={questForm.start_date}
+                    onChange={handleQuestInputChange}
+                    required
+                  />
+                </label>
+
+                <label>
+                  End date
+                  <input
+                    type="date"
+                    name="end_date"
+                    value={questForm.end_date}
+                    onChange={handleQuestInputChange}
+                    required
+                  />
+                </label>
+
+                <label>
+                  First-tier trips
+                  <input
+                    type="number"
+                    name="first_tier_trips"
+                    value={questForm.first_tier_trips}
+                    onChange={handleQuestInputChange}
+                    min="1"
+                    step="1"
+                    required
+                  />
+                </label>
+
+                <label>
+                  First-tier bonus
+                  <input
+                    type="number"
+                    name="first_tier_bonus"
+                    value={questForm.first_tier_bonus}
+                    onChange={handleQuestInputChange}
+                    min="0"
+                    step="0.01"
+                    required
+                  />
+                </label>
+
+                <label>
+                  Final-tier trips
+                  <input
+                    type="number"
+                    name="final_tier_trips"
+                    value={questForm.final_tier_trips}
+                    onChange={handleQuestInputChange}
+                    min="2"
+                    step="1"
+                    required
+                  />
+                </label>
+
+                <label>
+                  Final additional bonus
+                  <input
+                    type="number"
+                    name="final_additional_bonus"
+                    value={questForm.final_additional_bonus}
+                    onChange={handleQuestInputChange}
+                    min="0"
+                    step="0.01"
+                    required
+                  />
+                </label>
+              </div>
+
+              <button type="submit" className="primary-button" disabled={isSavingQuest}>
+                {isSavingQuest
+                  ? "Saving..."
+                  : editingQuestId
+                    ? "Update quest"
+                    : "Create quest"}
+              </button>
+            </form>
+
+            <div className="quest-manager-list-section">
+              <h4>Saved quests</h4>
+              {quests.length > 0 ? (
+                <div className="quest-manager-list">
+                  {quests.map((quest) => (
+                    <article className="quest-manager-row" key={quest.id}>
+                      <div>
+                        <strong>{quest.title}</strong>
+                        <span>
+                          {formatShortDate(new Date(`${quest.start_date}T00:00:00`))}
+                          {" - "}
+                          {formatShortDate(new Date(`${quest.end_date}T00:00:00`))}
+                          {" · "}
+                          {Math.min(quest.progress_trips, quest.final_tier_trips)}
+                          /{quest.final_tier_trips} trips
+                        </span>
+                      </div>
+                      <span
+                        className={`quest-status quest-status-${quest.status.toLowerCase()}`}
+                      >
+                        {quest.status}
+                      </span>
+                      <div className="quest-manager-actions">
+                        <button
+                          type="button"
+                          className="edit-button"
+                          onClick={() => openQuestManager(quest)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="delete-button"
+                          onClick={() => handleDeleteQuest(quest.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="quest-panel-empty-copy">No quests saved yet.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {isWeekBrowserOpen && (
         <div className="week-browser-overlay" onClick={() => setIsWeekBrowserOpen(false)}>

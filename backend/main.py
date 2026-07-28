@@ -18,6 +18,10 @@ from database import (
     delete_all_daily_records,
     get_wallet_floor,
     set_wallet_floor,
+    get_quests,
+    create_quest,
+    update_quest,
+    delete_quest,
 )
 from schemas import (
     Summary,
@@ -31,6 +35,8 @@ from schemas import (
     DeleteAllResult,
     WalletFloor,
     WalletFloorUpdate,
+    Quest,
+    QuestCreate,
 )
 
 
@@ -42,8 +48,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Uber Dashboard API",
-    description="Backend API for Uber Dashboard v2",
-    version="3.0.0",
+    description="Local API for Uber Nest Tracker",
+    version="3.12.1",
     lifespan=lifespan,
 )
 
@@ -80,6 +86,38 @@ def update_wallet_floor_setting(payload: WalletFloorUpdate):
     return {"uber_wallet_floor": payload.uber_wallet_floor}
 
 
+@app.get("/api/quests", response_model=list[Quest])
+def quests():
+    return get_quests()
+
+
+@app.post("/api/quests", response_model=Quest, status_code=201)
+def add_quest(payload: QuestCreate):
+    try:
+        return create_quest(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.put("/api/quests/{quest_id}", response_model=Quest)
+def edit_quest(quest_id: int, payload: QuestCreate):
+    try:
+        updated = update_quest(quest_id, payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Quest not found.")
+    return updated
+
+
+@app.delete("/api/quests/{quest_id}")
+def remove_quest(quest_id: int):
+    if delete_quest(quest_id) == 0:
+        raise HTTPException(status_code=404, detail="Quest not found.")
+    return {"message": "Quest deleted.", "id": quest_id}
+
+
 @app.get("/api/daily", response_model=list[DailyRecord])
 def daily():
     return get_daily_data()
@@ -105,7 +143,7 @@ def import_commit(payload: ImportRequest):
 @app.get("/api/daily/csv")
 def daily_csv():
     csv_text = get_daily_csv()
-    filename = f"uber-logs-{date_cls.today().isoformat()}.csv"
+    filename = f"uber-backup-{date_cls.today().isoformat()}.csv"
 
     return Response(
         content=csv_text,

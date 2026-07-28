@@ -1,3 +1,4 @@
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -23,6 +24,9 @@ ALLOWED_DAY_TAGS = {
     "dead_zone",
     "good_orders",
     "bad_orders",
+    "shop_and_deliver",
+    "delivery_heavy",
+    "mixed_orders",
     "quest_day",
     "app_issues",
     "low_battery",
@@ -48,6 +52,138 @@ def _day_tags_from_storage(stored_value):
         return None
 
     return [tag for tag in stored_value.split(",") if tag]
+
+
+def _break_value(session, key):
+    if isinstance(session, dict):
+        return session.get(key)
+    return getattr(session, key, None)
+
+
+def _raw_break_sessions(breaks):
+    if not breaks:
+        return None
+
+    return [
+        {
+            "start_time": _break_value(session, "start_time"),
+            "end_time": _break_value(session, "end_time"),
+            "start_odometer": _break_value(session, "start_odometer"),
+            "end_odometer": _break_value(session, "end_odometer"),
+        }
+        for session in breaks
+    ]
+
+
+def _breaks_to_storage(breaks):
+    raw_sessions = _raw_break_sessions(breaks)
+    if not raw_sessions:
+        return None
+    return json.dumps(raw_sessions, separators=(",", ":"))
+
+
+def _breaks_from_storage(stored_value):
+    if not stored_value:
+        return None
+
+    sessions = json.loads(stored_value)
+    enriched = []
+    for session in sessions:
+        duration = calculate_same_day_hours(
+            session.get("start_time"),
+            session.get("end_time"),
+        )
+        start_odometer = session.get("start_odometer")
+        end_odometer = session.get("end_odometer")
+        miles = None
+        if start_odometer is not None and end_odometer is not None:
+            miles = end_odometer - start_odometer
+
+        enriched.append({
+            **session,
+            "duration_hours": round_optional(duration, 4),
+            "miles": round_optional(miles, 1),
+        })
+
+    return enriched
+
+
+def _raw_work_sessions(sessions):
+    if not sessions:
+        return None
+
+    return [
+        {
+            "start_time": _break_value(session, "start_time"),
+            "stop_time": _break_value(session, "stop_time"),
+            "start_odometer": _break_value(session, "start_odometer"),
+            "stop_odometer": _break_value(session, "stop_odometer"),
+        }
+        for session in sessions
+    ]
+
+
+def _work_sessions_to_storage(sessions):
+    raw_sessions = _raw_work_sessions(sessions)
+    if not raw_sessions:
+        return None
+    return json.dumps(raw_sessions, separators=(",", ":"))
+
+
+def _work_sessions_from_storage(stored_value):
+    if not stored_value:
+        return None
+    return json.loads(stored_value)
+
+
+def _all_work_sessions(record):
+    sessions = []
+    first_values = (
+        record.work_start_time,
+        record.uber_stop_time,
+        record.start_odometer,
+        record.end_work_odometer,
+    )
+    if any(value is not None for value in first_values):
+        sessions.append({
+            "start_time": record.work_start_time,
+            "stop_time": record.uber_stop_time,
+            "start_odometer": record.start_odometer,
+            "stop_odometer": record.end_work_odometer,
+        })
+
+    sessions.extend(_raw_work_sessions(
+        getattr(record, "additional_sessions", None)
+    ) or [])
+    return sessions
+
+
+def _enrich_work_sessions(sessions):
+    if not sessions:
+        return None
+
+    enriched = []
+    for session in sessions:
+        start_time = _break_value(session, "start_time")
+        stop_time = _break_value(session, "stop_time")
+        start_odometer = _break_value(session, "start_odometer")
+        stop_odometer = _break_value(session, "stop_odometer")
+        miles = None
+        if start_odometer is not None and stop_odometer is not None:
+            miles = stop_odometer - start_odometer
+
+        enriched.append({
+            "start_time": start_time,
+            "stop_time": stop_time,
+            "start_odometer": start_odometer,
+            "stop_odometer": stop_odometer,
+            "duration_hours": round_optional(
+                calculate_same_day_hours(start_time, stop_time), 4
+            ),
+            "miles": round_optional(miles, 1),
+        })
+
+    return enriched
 
 
 def round_optional(value, decimals=2):
@@ -123,13 +259,10 @@ def validate_daily_record(record):
     Frontend validation is helpful, but this is the real API gate.
     """
 
-    start_odometer = record.start_odometer
-    end_work_odometer = record.end_work_odometer
     end_home_odometer = record.end_home_odometer
-
-    work_start_time = record.work_start_time
-    uber_stop_time = record.uber_stop_time
     home_end_time = record.home_end_time
+    work_sessions = _all_work_sessions(record)
+    breaks = getattr(record, "breaks", None) or []
 
     if record.online_hours <= 0:
         raise ValueError("Online hours must be greater than 0.")
@@ -140,77 +273,149 @@ def validate_daily_record(record):
     if record.net_fare < 0 or record.tips < 0 or record.promotions < 0:
         raise ValueError("Fare, tips, and promotions cannot be negative.")
 
-    if start_odometer is not None and start_odometer < 0:
-        raise ValueError("Start odometer cannot be negative.")
-
-    if end_work_odometer is not None and end_work_odometer < 0:
-        raise ValueError("End Uber/work odometer cannot be negative.")
-
     if end_home_odometer is not None and end_home_odometer < 0:
         raise ValueError("End home odometer cannot be negative.")
 
-    if end_work_odometer is not None and start_odometer is None:
-        raise ValueError("Start odometer is required when end Uber/work odometer is entered.")
-
-    if end_home_odometer is not None and start_odometer is None:
-        raise ValueError("Start odometer is required when end home odometer is entered.")
-
-    if end_home_odometer is not None and end_work_odometer is None:
-        raise ValueError("End Uber/work odometer is required when end home odometer is entered.")
-
-    if (
-        start_odometer is not None
-        and end_work_odometer is not None
-        and end_work_odometer < start_odometer
-    ):
-        raise ValueError("End Uber/work odometer cannot be lower than start odometer.")
-
-    if (
-        start_odometer is not None
-        and end_home_odometer is not None
-        and end_home_odometer < start_odometer
-    ):
-        raise ValueError("End home odometer cannot be lower than start odometer.")
-
-    if (
-        end_work_odometer is not None
-        and end_home_odometer is not None
-        and end_home_odometer < end_work_odometer
-    ):
-        raise ValueError("End home odometer cannot be lower than end Uber/work odometer.")
-
-    if uber_stop_time is not None and work_start_time is None:
-        raise ValueError("Work start time is required when Uber stop time is entered.")
-
-    if home_end_time is not None and (work_start_time is None or uber_stop_time is None):
-        raise ValueError("Work start time and Uber stop time are required when home/end time is entered.")
-
-    work_start_minutes = parse_12_hour_time_to_minutes(work_start_time)
-    uber_stop_minutes = parse_12_hour_time_to_minutes(uber_stop_time)
     home_end_minutes = parse_12_hour_time_to_minutes(home_end_time)
-
-    if work_start_time is not None and work_start_minutes is None:
-        raise ValueError("Work start time must look like 5, 5:30, or 12:05 with AM/PM.")
-
-    if uber_stop_time is not None and uber_stop_minutes is None:
-        raise ValueError("Uber stop time must look like 5, 5:30, or 12:05 with AM/PM.")
-
     if home_end_time is not None and home_end_minutes is None:
         raise ValueError("Home/end time must look like 5, 5:30, or 12:05 with AM/PM.")
 
-    if (
-        work_start_minutes is not None
-        and uber_stop_minutes is not None
-        and uber_stop_minutes <= work_start_minutes
-    ):
-        raise ValueError("Uber stop time must be later than work start time.")
+    first_session_values = (
+        record.work_start_time,
+        record.uber_stop_time,
+        record.start_odometer,
+        record.end_work_odometer,
+    )
+    if getattr(record, "additional_sessions", None) and not any(first_session_values):
+        raise ValueError("Session 1 is required before additional work sessions.")
 
-    if (
-        uber_stop_minutes is not None
-        and home_end_minutes is not None
-        and home_end_minutes < uber_stop_minutes
-    ):
-        raise ValueError("Home/end time cannot be earlier than Uber stop time.")
+    session_ranges = []
+    previous_stop_minutes = None
+    previous_stop_odometer = None
+    for index, session in enumerate(work_sessions, start=1):
+        start_time = _break_value(session, "start_time")
+        stop_time = _break_value(session, "stop_time")
+        start_minutes = parse_12_hour_time_to_minutes(start_time)
+        stop_minutes = parse_12_hour_time_to_minutes(stop_time)
+
+        if start_minutes is None or stop_minutes is None:
+            raise ValueError(
+                f"Session {index} start and stop times must both be entered "
+                "using a time like 5, 5:30, or 12:05 with AM/PM."
+            )
+        if stop_minutes <= start_minutes:
+            raise ValueError(f"Session {index} stop time must be later than its start time.")
+        if previous_stop_minutes is not None and start_minutes < previous_stop_minutes:
+            raise ValueError("Work sessions cannot overlap and must be entered in time order.")
+
+        start_odometer = _break_value(session, "start_odometer")
+        stop_odometer = _break_value(session, "stop_odometer")
+        if (start_odometer is None) != (stop_odometer is None):
+            raise ValueError(f"Session {index} odometers must be entered together.")
+        if start_odometer is not None:
+            if start_odometer < 0 or stop_odometer < 0:
+                raise ValueError(f"Session {index} odometers cannot be negative.")
+            if stop_odometer < start_odometer:
+                raise ValueError(
+                    f"Session {index} stop odometer cannot be lower than its start odometer."
+                )
+            if (
+                previous_stop_odometer is not None
+                and start_odometer < previous_stop_odometer
+            ):
+                raise ValueError(
+                    "Session odometers must stay in trip order between sessions."
+                )
+            previous_stop_odometer = stop_odometer
+
+        session_ranges.append({
+            "start_minutes": start_minutes,
+            "stop_minutes": stop_minutes,
+            "start_odometer": start_odometer,
+            "stop_odometer": stop_odometer,
+        })
+        previous_stop_minutes = stop_minutes
+
+    if (home_end_time is not None or end_home_odometer is not None) and not session_ranges:
+        raise ValueError("A work session is required when final home-end details are entered.")
+
+    if session_ranges:
+        final_session = session_ranges[-1]
+        if (
+            home_end_minutes is not None
+            and home_end_minutes < final_session["stop_minutes"]
+        ):
+            raise ValueError("Home/end time cannot be earlier than the final session stop time.")
+        if end_home_odometer is not None:
+            final_stop_odometer = final_session["stop_odometer"]
+            if final_stop_odometer is None:
+                raise ValueError(
+                    "The final session odometers are required when home-end odometer is entered."
+                )
+            if end_home_odometer < final_stop_odometer:
+                raise ValueError(
+                    "End home odometer cannot be lower than the final session stop odometer."
+                )
+
+    previous_break_end = None
+    previous_break_end_odometer = None
+    for index, session in enumerate(breaks, start=1):
+        break_start_time = _break_value(session, "start_time")
+        break_end_time = _break_value(session, "end_time")
+        break_start_minutes = parse_12_hour_time_to_minutes(break_start_time)
+        break_end_minutes = parse_12_hour_time_to_minutes(break_end_time)
+
+        if break_start_minutes is None or break_end_minutes is None:
+            raise ValueError(
+                f"Break {index} times must look like 5, 5:30, or 12:05 with AM/PM."
+            )
+
+        matching_session = next(
+            (
+                session_range
+                for session_range in session_ranges
+                if session_range["start_minutes"] <= break_start_minutes
+                < break_end_minutes <= session_range["stop_minutes"]
+            ),
+            None,
+        )
+        if matching_session is None:
+            raise ValueError(
+                f"Break {index} must fall completely inside one work session."
+            )
+
+        if previous_break_end is not None and break_start_minutes < previous_break_end:
+            raise ValueError("Break sessions cannot overlap and must be entered in time order.")
+        previous_break_end = break_end_minutes
+
+        break_start_odometer = _break_value(session, "start_odometer")
+        break_end_odometer = _break_value(session, "end_odometer")
+        if (break_start_odometer is None) != (break_end_odometer is None):
+            raise ValueError(
+                f"Break {index} start and end odometers must be entered together."
+            )
+        if break_start_odometer is not None:
+            session_start_odometer = matching_session["start_odometer"]
+            session_stop_odometer = matching_session["stop_odometer"]
+            if session_start_odometer is None or session_stop_odometer is None:
+                raise ValueError(
+                    f"Session odometers are required for break {index} odometers."
+                )
+            if not (
+                session_start_odometer <= break_start_odometer
+                <= break_end_odometer <= session_stop_odometer
+            ):
+                raise ValueError(
+                    f"Break {index} odometers must be inside the same work session."
+                )
+            if (
+                previous_break_end_odometer is not None
+                and break_start_odometer < previous_break_end_odometer
+            ):
+                raise ValueError(
+                    "Break odometers cannot overlap and must be entered in trip order."
+                )
+            previous_break_end_odometer = break_end_odometer
 
     wallet_balance = record.wallet_balance
     if wallet_balance is not None and wallet_balance < 0:
@@ -242,7 +447,7 @@ def get_hourly_label(avg_hourly: float):
 
 def get_promo_label(promo_share: float):
     if promo_share >= 0.25:
-        return "Promo-carried"
+        return "Promo-boosted"
     if promo_share >= 0.10:
         return "Promo helped"
     return "Organic earnings"
@@ -282,28 +487,51 @@ def calculate_daily_metrics(record):
 
     miles_driven = record.miles_driven
 
-    start_odometer = record.start_odometer
-    end_work_odometer = record.end_work_odometer
     end_home_odometer = record.end_home_odometer
-
-    work_start_time = record.work_start_time
-    uber_stop_time = record.uber_stop_time
     home_end_time = record.home_end_time
+    work_sessions = _all_work_sessions(record)
+    breaks = getattr(record, "breaks", None) or []
+
+    break_miles = None
+    break_mile_values = []
+    for session in breaks:
+        break_start_odometer = _break_value(session, "start_odometer")
+        break_end_odometer = _break_value(session, "end_odometer")
+        if break_start_odometer is not None and break_end_odometer is not None:
+            break_mile_values.append(break_end_odometer - break_start_odometer)
+    if break_mile_values:
+        break_miles = sum(break_mile_values)
 
     work_miles = None
-    if start_odometer is not None and end_work_odometer is not None:
-        if end_work_odometer >= start_odometer:
-            work_miles = end_work_odometer - start_odometer
+    session_mile_values = []
+    all_sessions_have_mileage = bool(work_sessions)
+    for session in work_sessions:
+        session_start_odometer = _break_value(session, "start_odometer")
+        session_stop_odometer = _break_value(session, "stop_odometer")
+        if session_start_odometer is None or session_stop_odometer is None:
+            all_sessions_have_mileage = False
+            break
+        session_mile_values.append(session_stop_odometer - session_start_odometer)
+    if all_sessions_have_mileage:
+        work_miles = sum(session_mile_values)
+        if break_miles is not None:
+            work_miles -= break_miles
 
     total_outing_miles = None
-    if start_odometer is not None and end_home_odometer is not None:
-        if end_home_odometer >= start_odometer:
-            total_outing_miles = end_home_odometer - start_odometer
+    first_start_odometer = (
+        _break_value(work_sessions[0], "start_odometer")
+        if work_sessions else None
+    )
+    if first_start_odometer is not None and end_home_odometer is not None:
+        total_outing_miles = end_home_odometer - first_start_odometer
 
     post_work_miles = None
-    if end_work_odometer is not None and end_home_odometer is not None:
-        if end_home_odometer >= end_work_odometer:
-            post_work_miles = end_home_odometer - end_work_odometer
+    final_stop_odometer = (
+        _break_value(work_sessions[-1], "stop_odometer")
+        if work_sessions else None
+    )
+    if final_stop_odometer is not None and end_home_odometer is not None:
+        post_work_miles = end_home_odometer - final_stop_odometer
 
     miles_per_trip = None
     if work_miles is not None and work_miles > 0 and record.trips > 0:
@@ -326,9 +554,32 @@ def calculate_daily_metrics(record):
     if effective_miles_for_legacy_metric is not None and effective_miles_for_legacy_metric > 0:
         earnings_per_mile = total_earnings / effective_miles_for_legacy_metric
 
-    real_work_hours = calculate_same_day_hours(work_start_time, uber_stop_time)
-    full_outing_hours = calculate_same_day_hours(work_start_time, home_end_time)
-    post_work_hours = calculate_same_day_hours(uber_stop_time, home_end_time)
+    break_hours = sum(
+        calculate_same_day_hours(
+            _break_value(session, "start_time"),
+            _break_value(session, "end_time"),
+        )
+        for session in breaks
+    ) if breaks else None
+    real_work_hours = sum(
+        calculate_same_day_hours(
+            _break_value(session, "start_time"),
+            _break_value(session, "stop_time"),
+        )
+        for session in work_sessions
+    ) if work_sessions else None
+    if real_work_hours is not None and break_hours is not None:
+        real_work_hours -= break_hours
+    first_start_time = (
+        _break_value(work_sessions[0], "start_time")
+        if work_sessions else None
+    )
+    final_stop_time = (
+        _break_value(work_sessions[-1], "stop_time")
+        if work_sessions else None
+    )
+    full_outing_hours = calculate_same_day_hours(first_start_time, home_end_time)
+    post_work_hours = calculate_same_day_hours(final_stop_time, home_end_time)
 
     earnings_per_real_work_hour = None
     if real_work_hours is not None and real_work_hours > 0:
@@ -349,15 +600,19 @@ def calculate_daily_metrics(record):
         "earnings_per_mile": round_optional(earnings_per_mile),
 
         "work_miles": round_optional(work_miles, 1),
+        "break_miles": round_optional(break_miles, 1),
         "total_outing_miles": round_optional(total_outing_miles, 1),
         "post_work_miles": round_optional(post_work_miles, 1),
         "miles_per_trip": round_optional(miles_per_trip, 1),
         "earnings_per_work_mile": round_optional(earnings_per_work_mile),
         "earnings_per_total_mile": round_optional(earnings_per_total_mile),
 
-        "real_work_hours": round_optional(real_work_hours, 2),
-        "full_outing_hours": round_optional(full_outing_hours, 2),
-        "post_work_hours": round_optional(post_work_hours, 2),
+        # Preserve minute-level accuracy when daily values are summed into a
+        # week. The frontend still presents these as friendly hours/minutes.
+        "real_work_hours": round_optional(real_work_hours, 4),
+        "break_hours": round_optional(break_hours, 4),
+        "full_outing_hours": round_optional(full_outing_hours, 4),
+        "post_work_hours": round_optional(post_work_hours, 4),
         "earnings_per_real_work_hour": round_optional(earnings_per_real_work_hour),
         "earnings_per_full_outing_hour": round_optional(earnings_per_full_outing_hour),
 
@@ -395,6 +650,7 @@ def initialize_database():
             end_home_odometer REAL,
 
             work_miles REAL,
+            break_miles REAL,
             total_outing_miles REAL,
             post_work_miles REAL,
             miles_per_trip REAL,
@@ -404,8 +660,11 @@ def initialize_database():
             work_start_time TEXT,
             uber_stop_time TEXT,
             home_end_time TEXT,
+            breaks_json TEXT,
+            additional_sessions_json TEXT,
 
             real_work_hours REAL,
+            break_hours REAL,
             full_outing_hours REAL,
             post_work_hours REAL,
             earnings_per_real_work_hour REAL,
@@ -440,6 +699,20 @@ def initialize_database():
         "INSERT OR IGNORE INTO app_settings (id, uber_wallet_floor) VALUES (1, NULL)"
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            first_tier_trips INTEGER NOT NULL,
+            first_tier_bonus REAL NOT NULL,
+            final_tier_trips INTEGER NOT NULL,
+            final_additional_bonus REAL NOT NULL
+        )
+        """
+    )
+
     # v3.2: if the table already existed from before Day Effects shipped,
     # add the new column in place rather than requiring a fresh DB. Wrapped
     # in try/except since ALTER TABLE ADD COLUMN fails if the column is
@@ -449,6 +722,70 @@ def initialize_database():
         cursor.execute("ALTER TABLE daily_logs ADD COLUMN day_tags TEXT")
     except sqlite3.OperationalError:
         pass
+
+    # Break tracking is optional and nullable, so existing daily logs remain
+    # valid. Add each column independently for databases created by an older
+    # app version.
+    for column_definition in (
+        "breaks_json TEXT",
+        "additional_sessions_json TEXT",
+        "break_miles REAL",
+        "break_hours REAL",
+    ):
+        try:
+            cursor.execute(f"ALTER TABLE daily_logs ADD COLUMN {column_definition}")
+        except sqlite3.OperationalError:
+            pass
+
+    # v3.8.1: promotions are a legitimate part of Uber earnings and often
+    # motivate the shift, so the former negative-sounding label is now
+    # framed as a boost. Update saved computed labels for existing logs too.
+    cursor.execute(
+        """
+        UPDATE daily_logs
+        SET promo_label = 'Promo-boosted'
+        WHERE promo_label = 'Promo-carried'
+        """
+    )
+
+    # Preserve data if the brief single-break draft was launched before the
+    # multiple-session design replaced it. Those columns may still exist in
+    # a local DB even though new databases no longer create them.
+    existing_columns = {
+        row["name"]
+        for row in cursor.execute("PRAGMA table_info(daily_logs)").fetchall()
+    }
+    legacy_break_columns = {
+        "break_start_time",
+        "break_end_time",
+        "break_start_odometer",
+        "break_end_odometer",
+    }
+    if legacy_break_columns <= existing_columns:
+        legacy_rows = cursor.execute(
+            """
+            SELECT
+                date, breaks_json, break_start_time, break_end_time,
+                break_start_odometer, break_end_odometer
+            FROM daily_logs
+            WHERE breaks_json IS NULL
+              AND break_start_time IS NOT NULL
+              AND break_end_time IS NOT NULL
+            """
+        ).fetchall()
+        for row in legacy_rows:
+            cursor.execute(
+                "UPDATE daily_logs SET breaks_json = ? WHERE date = ?",
+                (
+                    _breaks_to_storage([{
+                        "start_time": row["break_start_time"],
+                        "end_time": row["break_end_time"],
+                        "start_odometer": row["break_start_odometer"],
+                        "end_odometer": row["break_end_odometer"],
+                    }]),
+                    row["date"],
+                ),
+            )
 
     # These 4 rows are a minimal "starter" set so a brand-new install isn't
     # a completely blank dashboard on first run -- separate from and much
@@ -526,6 +863,8 @@ def initialize_database():
             self.work_start_time = None
             self.uber_stop_time = None
             self.home_end_time = None
+            self.breaks = None
+            self.additional_sessions = None
 
             self.wallet_balance = data["wallet_balance"]
             self.notes = data["notes"]
@@ -669,6 +1008,7 @@ def get_daily_data():
             end_home_odometer,
 
             work_miles,
+            break_miles,
             total_outing_miles,
             post_work_miles,
             miles_per_trip,
@@ -678,8 +1018,11 @@ def get_daily_data():
             work_start_time,
             uber_stop_time,
             home_end_time,
+            breaks_json,
+            additional_sessions_json,
 
             real_work_hours,
+            break_hours,
             full_outing_hours,
             post_work_hours,
             earnings_per_real_work_hour,
@@ -710,6 +1053,24 @@ def get_daily_data():
 
     for row in daily_rows:
         row["day_tags"] = _day_tags_from_storage(row.get("day_tags"))
+        row["breaks"] = _breaks_from_storage(row.pop("breaks_json", None))
+        sessions = []
+        if (
+            row.get("work_start_time") is not None
+            and row.get("uber_stop_time") is not None
+        ):
+            sessions.append({
+                "start_time": row.get("work_start_time"),
+                "stop_time": row.get("uber_stop_time"),
+                "start_odometer": row.get("start_odometer"),
+                "stop_odometer": row.get("end_work_odometer"),
+            })
+        sessions.extend(
+            _work_sessions_from_storage(
+                row.pop("additional_sessions_json", None)
+            ) or []
+        )
+        row["work_sessions"] = _enrich_work_sessions(sessions)
 
     _attach_daily_wallet_deltas(daily_rows)  # newest-first, as required
 
@@ -793,6 +1154,189 @@ def set_wallet_floor(value):
     return value
 
 
+# ============================================================
+# Quests (v3.7) — progress is always derived from daily logs
+# ============================================================
+
+def _validate_quest(quest):
+    from datetime import date
+
+    try:
+        start_date = date.fromisoformat(quest.start_date)
+        end_date = date.fromisoformat(quest.end_date)
+    except (TypeError, ValueError):
+        raise ValueError("Quest dates must use YYYY-MM-DD.")
+
+    if end_date < start_date:
+        raise ValueError("Quest end date cannot be earlier than its start date.")
+    if quest.first_tier_trips <= 0:
+        raise ValueError("First-tier trip requirement must be greater than 0.")
+    if quest.final_tier_trips <= quest.first_tier_trips:
+        raise ValueError("Final-tier trips must be greater than first-tier trips.")
+    if quest.first_tier_bonus < 0 or quest.final_additional_bonus < 0:
+        raise ValueError("Quest bonuses cannot be negative.")
+
+
+def _quest_title(start_date, end_date):
+    if (
+        start_date.weekday() == 4
+        and end_date.weekday() == 6
+        and (end_date - start_date).days == 2
+    ):
+        return "Weekend Quest"
+    if (
+        start_date.weekday() == 0
+        and end_date.weekday() == 3
+        and (end_date - start_date).days == 3
+    ):
+        return "Weekday Quest"
+    return "Quest"
+
+
+def _quest_response(row):
+    from datetime import date
+
+    start_date = date.fromisoformat(row["start_date"])
+    end_date = date.fromisoformat(row["end_date"])
+    progress = int(row["progress_trips"] or 0)
+    first_earned = progress >= row["first_tier_trips"]
+    final_earned = progress >= row["final_tier_trips"]
+
+    if final_earned:
+        status = "Completed"
+    elif date.today() < start_date:
+        status = "Scheduled"
+    elif date.today() <= end_date:
+        status = "Active"
+    else:
+        status = "Failed"
+
+    earned_bonus = 0
+    if first_earned:
+        earned_bonus += row["first_tier_bonus"]
+    if final_earned:
+        earned_bonus += row["final_additional_bonus"]
+
+    return {
+        "id": row["id"],
+        "title": _quest_title(start_date, end_date),
+        "start_date": row["start_date"],
+        "end_date": row["end_date"],
+        "first_tier_trips": row["first_tier_trips"],
+        "first_tier_bonus": round(row["first_tier_bonus"], 2),
+        "final_tier_trips": row["final_tier_trips"],
+        "final_additional_bonus": round(row["final_additional_bonus"], 2),
+        "total_possible_bonus": round(
+            row["first_tier_bonus"] + row["final_additional_bonus"], 2
+        ),
+        "progress_trips": progress,
+        "first_tier_remaining": max(row["first_tier_trips"] - progress, 0),
+        "final_tier_remaining": max(row["final_tier_trips"] - progress, 0),
+        "first_tier_earned": first_earned,
+        "final_tier_earned": final_earned,
+        "earned_bonus": round(earned_bonus, 2),
+        "status": status,
+    }
+
+
+def _quest_rows(where_clause="", params=()):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT
+            q.*,
+            COALESCE(SUM(d.trips), 0) AS progress_trips
+        FROM quests q
+        LEFT JOIN daily_logs d
+          ON d.date BETWEEN q.start_date AND q.end_date
+        {where_clause}
+        GROUP BY q.id
+        ORDER BY q.start_date DESC, q.id DESC
+        """,
+        params,
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_quests():
+    return [_quest_response(row) for row in _quest_rows()]
+
+
+def create_quest(quest):
+    _validate_quest(quest)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO quests (
+            start_date, end_date,
+            first_tier_trips, first_tier_bonus,
+            final_tier_trips, final_additional_bonus
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            quest.start_date,
+            quest.end_date,
+            quest.first_tier_trips,
+            quest.first_tier_bonus,
+            quest.final_tier_trips,
+            quest.final_additional_bonus,
+        ),
+    )
+    quest_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return _quest_response(_quest_rows("WHERE q.id = ?", (quest_id,))[0])
+
+
+def update_quest(quest_id, quest):
+    _validate_quest(quest)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE quests
+        SET
+            start_date = ?,
+            end_date = ?,
+            first_tier_trips = ?,
+            first_tier_bonus = ?,
+            final_tier_trips = ?,
+            final_additional_bonus = ?
+        WHERE id = ?
+        """,
+        (
+            quest.start_date,
+            quest.end_date,
+            quest.first_tier_trips,
+            quest.first_tier_bonus,
+            quest.final_tier_trips,
+            quest.final_additional_bonus,
+            quest_id,
+        ),
+    )
+    updated_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if updated_count == 0:
+        return None
+    return _quest_response(_quest_rows("WHERE q.id = ?", (quest_id,))[0])
+
+
+def delete_quest(quest_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM quests WHERE id = ?", (quest_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count
+
+
 def create_daily_record(record):
     validate_daily_record(record)
     metrics = calculate_daily_metrics(record)
@@ -822,6 +1366,7 @@ def create_daily_record(record):
             end_home_odometer,
 
             work_miles,
+            break_miles,
             total_outing_miles,
             post_work_miles,
             miles_per_trip,
@@ -831,8 +1376,11 @@ def create_daily_record(record):
             work_start_time,
             uber_stop_time,
             home_end_time,
+            breaks_json,
+            additional_sessions_json,
 
             real_work_hours,
+            break_hours,
             full_outing_hours,
             post_work_hours,
             earnings_per_real_work_hour,
@@ -852,7 +1400,7 @@ def create_daily_record(record):
 
             day_tags
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record.date,
@@ -873,6 +1421,7 @@ def create_daily_record(record):
             record.end_home_odometer,
 
             metrics["work_miles"],
+            metrics["break_miles"],
             metrics["total_outing_miles"],
             metrics["post_work_miles"],
             metrics["miles_per_trip"],
@@ -882,8 +1431,11 @@ def create_daily_record(record):
             record.work_start_time,
             record.uber_stop_time,
             record.home_end_time,
+            _breaks_to_storage(record.breaks),
+            _work_sessions_to_storage(record.additional_sessions),
 
             metrics["real_work_hours"],
+            metrics["break_hours"],
             metrics["full_outing_hours"],
             metrics["post_work_hours"],
             metrics["earnings_per_real_work_hour"],
@@ -928,6 +1480,7 @@ def create_daily_record(record):
         "end_home_odometer": record.end_home_odometer,
 
         "work_miles": metrics["work_miles"],
+        "break_miles": metrics["break_miles"],
         "total_outing_miles": metrics["total_outing_miles"],
         "post_work_miles": metrics["post_work_miles"],
         "miles_per_trip": metrics["miles_per_trip"],
@@ -937,8 +1490,11 @@ def create_daily_record(record):
         "work_start_time": record.work_start_time,
         "uber_stop_time": record.uber_stop_time,
         "home_end_time": record.home_end_time,
+        "work_sessions": _enrich_work_sessions(_all_work_sessions(record)),
+        "breaks": _breaks_from_storage(_breaks_to_storage(record.breaks)),
 
         "real_work_hours": metrics["real_work_hours"],
+        "break_hours": metrics["break_hours"],
         "full_outing_hours": metrics["full_outing_hours"],
         "post_work_hours": metrics["post_work_hours"],
         "earnings_per_real_work_hour": metrics["earnings_per_real_work_hour"],
@@ -988,6 +1544,7 @@ def update_daily_record(date: str, record):
             end_home_odometer = ?,
 
             work_miles = ?,
+            break_miles = ?,
             total_outing_miles = ?,
             post_work_miles = ?,
             miles_per_trip = ?,
@@ -997,8 +1554,11 @@ def update_daily_record(date: str, record):
             work_start_time = ?,
             uber_stop_time = ?,
             home_end_time = ?,
+            breaks_json = ?,
+            additional_sessions_json = ?,
 
             real_work_hours = ?,
+            break_hours = ?,
             full_outing_hours = ?,
             post_work_hours = ?,
             earnings_per_real_work_hour = ?,
@@ -1037,6 +1597,7 @@ def update_daily_record(date: str, record):
             record.end_home_odometer,
 
             metrics["work_miles"],
+            metrics["break_miles"],
             metrics["total_outing_miles"],
             metrics["post_work_miles"],
             metrics["miles_per_trip"],
@@ -1046,8 +1607,11 @@ def update_daily_record(date: str, record):
             record.work_start_time,
             record.uber_stop_time,
             record.home_end_time,
+            _breaks_to_storage(record.breaks),
+            _work_sessions_to_storage(record.additional_sessions),
 
             metrics["real_work_hours"],
+            metrics["break_hours"],
             metrics["full_outing_hours"],
             metrics["post_work_hours"],
             metrics["earnings_per_real_work_hour"],
@@ -1099,6 +1663,7 @@ def update_daily_record(date: str, record):
         "end_home_odometer": record.end_home_odometer,
 
         "work_miles": metrics["work_miles"],
+        "break_miles": metrics["break_miles"],
         "total_outing_miles": metrics["total_outing_miles"],
         "post_work_miles": metrics["post_work_miles"],
         "miles_per_trip": metrics["miles_per_trip"],
@@ -1108,8 +1673,11 @@ def update_daily_record(date: str, record):
         "work_start_time": record.work_start_time,
         "uber_stop_time": record.uber_stop_time,
         "home_end_time": record.home_end_time,
+        "work_sessions": _enrich_work_sessions(_all_work_sessions(record)),
+        "breaks": _breaks_from_storage(_breaks_to_storage(record.breaks)),
 
         "real_work_hours": metrics["real_work_hours"],
+        "break_hours": metrics["break_hours"],
         "full_outing_hours": metrics["full_outing_hours"],
         "post_work_hours": metrics["post_work_hours"],
         "earnings_per_real_work_hour": metrics["earnings_per_real_work_hour"],
@@ -1177,32 +1745,37 @@ def delete_all_daily_records():
 import csv
 import io
 
-# Canonical column order for CSV export. Mirrors get_daily_data()'s field
-# order for readability. Any field present in the data but missing here is
-# appended at the end rather than dropped, so a future schema addition still
-# exports even if this list isn't updated.
+# Canonical column order for the mixed CSV backup. Daily fields retain their
+# familiar order; quest-definition fields live at the end. record_type keeps
+# both kinds of rows unambiguous while remaining spreadsheet-readable.
 CSV_COLUMNS = [
+    "record_type",
     "date", "online_hours", "trips", "net_fare", "tips", "promotions",
     "total_earnings", "avg_hourly", "avg_per_trip",
     "miles_driven", "earnings_per_mile",
     "start_odometer", "end_work_odometer", "end_home_odometer",
-    "work_miles", "total_outing_miles", "post_work_miles", "miles_per_trip",
+    "work_miles", "break_miles", "total_outing_miles", "post_work_miles", "miles_per_trip",
     "earnings_per_work_mile", "earnings_per_total_mile",
     "work_start_time", "uber_stop_time", "home_end_time",
-    "real_work_hours", "full_outing_hours", "post_work_hours",
+    "additional_sessions", "breaks",
+    "real_work_hours", "break_hours", "full_outing_hours", "post_work_hours",
     "earnings_per_real_work_hour", "earnings_per_full_outing_hour",
     "fare_share", "tip_share", "promo_share",
     "hourly_label", "promo_label", "tip_label", "mileage_label",
     "wallet_balance", "notes",
     "day_tags",
+    "quest_start_date", "quest_end_date",
+    "quest_first_tier_trips", "quest_first_tier_bonus",
+    "quest_final_tier_trips", "quest_final_additional_bonus",
 ]
 
 
 def get_daily_csv():
     """
-    Returns all daily logs serialized as a CSV string, newest first.
-    Reuses get_daily_data() so the exported columns stay in sync with the
-    schema automatically.
+    Returns daily logs plus raw quest definitions as one CSV backup. Daily
+    rows are newest first, followed by quest rows. Derived quest progress,
+    status, and earned bonus are intentionally omitted and recalculated on
+    restore from matching daily trips.
     """
     rows = get_daily_data()
 
@@ -1224,9 +1797,28 @@ def get_daily_csv():
         # comma-joined string ("rain,bad_orders"), same format
         # ImportRecord expects to read back in.
         row_for_csv = dict(row)
+        row_for_csv["record_type"] = "daily"
         row_for_csv["day_tags"] = _day_tags_to_storage(row.get("day_tags"))
+        row_for_csv["breaks"] = _breaks_to_storage(row.get("breaks"))
+        work_sessions = row.get("work_sessions") or []
+        row_for_csv["additional_sessions"] = _work_sessions_to_storage(
+            work_sessions[1:]
+        )
+        row_for_csv["work_sessions"] = _work_sessions_to_storage(work_sessions)
 
         writer.writerow({key: row_for_csv.get(key) for key in fieldnames})
+
+    for quest in get_quests():
+        quest_row = {
+            "record_type": "quest",
+            "quest_start_date": quest["start_date"],
+            "quest_end_date": quest["end_date"],
+            "quest_first_tier_trips": quest["first_tier_trips"],
+            "quest_first_tier_bonus": quest["first_tier_bonus"],
+            "quest_final_tier_trips": quest["final_tier_trips"],
+            "quest_final_additional_bonus": quest["final_additional_bonus"],
+        }
+        writer.writerow({key: quest_row.get(key) for key in fieldnames})
 
     return buffer.getvalue()
 
@@ -1398,13 +1990,11 @@ def _compute_week_wallet_delta(all_rows_asc, week_start, week_end):
 # CSV import (v2.6) — backup/restore, not general-purpose import
 # ============================================================
 #
-# Only RAW input fields are read from the CSV (date, hours, trips, fare,
-# tips, promotions, odometer/time fields, wallet, notes, day_tags). Any
-# computed column present in an exported CSV (total_earnings, labels,
-# wallet_delta, etc.) is deliberately ignored -- every row is recalculated
-# fresh through the same create_daily_record()/update_daily_record() path a
-# manual entry uses, so imported data can never carry forward stale
-# computed numbers.
+# Only raw daily inputs and quest definitions are read from the CSV. Any
+# computed column present in a backup (total earnings, labels, wallet delta,
+# quest progress/status, etc.) is deliberately ignored. Both row types are
+# restored through their normal create/update paths so imported data cannot
+# carry forward stale computed values.
 
 
 def _import_optional_float(value):
@@ -1443,6 +2033,36 @@ def _import_day_tags(value):
     return tags or None
 
 
+def _import_breaks(value, row):
+    if value is not None and str(value).strip() != "":
+        parsed = json.loads(str(value))
+        if not isinstance(parsed, list):
+            raise ValueError("breaks must be a JSON list")
+        return parsed or None
+
+    # Compatibility with a CSV exported by the initial single-break draft.
+    legacy_start_time = _import_optional_text(row.get("break_start_time"))
+    legacy_end_time = _import_optional_text(row.get("break_end_time"))
+    if legacy_start_time is None and legacy_end_time is None:
+        return None
+
+    return [{
+        "start_time": legacy_start_time,
+        "end_time": legacy_end_time,
+        "start_odometer": _import_optional_float(row.get("break_start_odometer")),
+        "end_odometer": _import_optional_float(row.get("break_end_odometer")),
+    }]
+
+
+def _import_work_sessions(value):
+    if value is None or str(value).strip() == "":
+        return None
+    parsed = json.loads(str(value))
+    if not isinstance(parsed, list):
+        raise ValueError("additional_sessions must be a JSON list")
+    return parsed or None
+
+
 class ImportRecord:
     """
     Stand-in for DailyRecordCreate, built from one CSV row. Exposes the same
@@ -1466,6 +2086,10 @@ class ImportRecord:
         self.work_start_time = _import_optional_text(row.get("work_start_time"))
         self.uber_stop_time = _import_optional_text(row.get("uber_stop_time"))
         self.home_end_time = _import_optional_text(row.get("home_end_time"))
+        self.additional_sessions = _import_work_sessions(
+            row.get("additional_sessions")
+        )
+        self.breaks = _import_breaks(row.get("breaks"), row)
 
         self.wallet_balance = _import_optional_float(row.get("wallet_balance"))
         self.notes = _import_optional_text(row.get("notes"))
@@ -1473,31 +2097,75 @@ class ImportRecord:
         self.day_tags = _import_day_tags(row.get("day_tags"))
 
 
+class ImportQuest:
+    """Raw quest definition reconstructed from a mixed backup CSV row."""
+
+    def __init__(self, row):
+        self.start_date = (
+            row.get("quest_start_date") or ""
+        ).strip()
+        self.end_date = (
+            row.get("quest_end_date") or ""
+        ).strip()
+        self.first_tier_trips = _import_required_int(
+            row.get("quest_first_tier_trips")
+        )
+        self.first_tier_bonus = _import_required_float(
+            row.get("quest_first_tier_bonus")
+        )
+        self.final_tier_trips = _import_required_int(
+            row.get("quest_final_tier_trips")
+        )
+        self.final_additional_bonus = _import_required_float(
+            row.get("quest_final_additional_bonus")
+        )
+
+
 def _parse_import_csv(csv_text):
     """
-    Parses CSV text into a list of (row_number, date, record, error) tuples.
-    row_number starts at 2 (row 1 is the header), matching what a person
-    would see if they opened the file in a spreadsheet. error is a string
-    describing why a row was rejected, or None if it parsed cleanly (parsing
-    only -- business-rule validation happens separately).
+    Parses daily and quest rows from a mixed backup. CSVs created before the
+    record_type column existed remain compatible and are treated as all-daily.
+    Each tuple is (row_number, record_type, display_id, record, error).
     """
     reader = csv.DictReader(io.StringIO(csv_text))
     results = []
 
     for i, row in enumerate(reader, start=2):
-        date_str = (row.get("date") or "").strip()
-
-        if not date_str:
-            results.append((i, None, None, "Missing date"))
+        record_type = (row.get("record_type") or "daily").strip().lower()
+        if record_type not in {"daily", "quest"}:
+            results.append(
+                (i, record_type, None, None, f"Unknown record_type: {record_type}")
+            )
             continue
 
+        display_id = None
         try:
-            record = ImportRecord(row)
+            if record_type == "quest":
+                record = ImportQuest(row)
+                display_id = (
+                    f"{record.start_date} to {record.end_date}"
+                    if record.start_date or record.end_date
+                    else None
+                )
+            else:
+                display_id = (row.get("date") or "").strip() or None
+                if display_id is None:
+                    results.append((i, record_type, None, None, "Missing date"))
+                    continue
+                record = ImportRecord(row)
         except (ValueError, TypeError) as error:
-            results.append((i, date_str, None, f"Invalid number in row: {error}"))
+            results.append(
+                (
+                    i,
+                    record_type,
+                    display_id,
+                    None,
+                    f"Invalid number in row: {error}",
+                )
+            )
             continue
 
-        results.append((i, date_str, record, None))
+        results.append((i, record_type, display_id, record, None))
 
     return results
 
@@ -1505,40 +2173,66 @@ def _parse_import_csv(csv_text):
 def preview_csv_import(csv_text):
     """
     Dry run: parses and validates every row but writes nothing. Returns
-    counts of how many rows would be newly inserted, how many would
-    overwrite an existing date, and how many rows are invalid (with reasons
-    for up to the first 20, to keep the response small).
+    counts of new/updated daily logs and quests, plus invalid rows (with
+    reasons for up to the first 20, to keep the response small).
     """
     parsed_rows = _parse_import_csv(csv_text)
     existing_dates = {row["date"] for row in get_daily_data()}
+    existing_quest_ranges = {
+        (quest["start_date"], quest["end_date"])
+        for quest in get_quests()
+    }
     seen_dates_in_file = set()
+    seen_quest_ranges_in_file = set()
 
     new_count = 0
     update_count = 0
+    quest_new_count = 0
+    quest_update_count = 0
     errors = []
 
-    for row_number, date_str, record, parse_error in parsed_rows:
+    for row_number, record_type, display_id, record, parse_error in parsed_rows:
         if parse_error:
-            errors.append({"row": row_number, "date": date_str, "message": parse_error})
+            errors.append(
+                {"row": row_number, "date": display_id, "message": parse_error}
+            )
             continue
 
         try:
-            validate_daily_record(record)
+            if record_type == "quest":
+                _validate_quest(record)
+            else:
+                validate_daily_record(record)
         except ValueError as error:
-            errors.append({"row": row_number, "date": date_str, "message": str(error)})
+            errors.append(
+                {"row": row_number, "date": display_id, "message": str(error)}
+            )
             continue
 
-        if date_str in existing_dates or date_str in seen_dates_in_file:
-            update_count += 1
+        if record_type == "quest":
+            quest_range = (record.start_date, record.end_date)
+            if (
+                quest_range in existing_quest_ranges
+                or quest_range in seen_quest_ranges_in_file
+            ):
+                quest_update_count += 1
+            else:
+                quest_new_count += 1
+            seen_quest_ranges_in_file.add(quest_range)
         else:
-            new_count += 1
+            if display_id in existing_dates or display_id in seen_dates_in_file:
+                update_count += 1
+            else:
+                new_count += 1
 
-        seen_dates_in_file.add(date_str)
+            seen_dates_in_file.add(display_id)
 
     return {
         "total_rows": len(parsed_rows),
         "new_count": new_count,
         "update_count": update_count,
+        "quest_new_count": quest_new_count,
+        "quest_update_count": quest_update_count,
         "error_count": len(errors),
         "errors": errors[:20],
     }
@@ -1546,44 +2240,70 @@ def preview_csv_import(csv_text):
 
 def commit_csv_import(csv_text):
     """
-    Actually performs the import: valid rows are upserted (created if the
-    date is new, overwritten if it already exists), invalid rows are
-    skipped and reported. A duplicate date appearing twice within the same
-    file is treated as create-then-update (last occurrence wins), not a
-    crash, matching "restore" semantics.
+    Actually performs the mixed import. Daily rows upsert by date; quest
+    definitions upsert by their date range. Computed progress/status is never
+    imported and is derived from the restored daily trip totals.
     """
     parsed_rows = _parse_import_csv(csv_text)
     existing_dates = {row["date"] for row in get_daily_data()}
+    existing_quest_ids = {
+        (quest["start_date"], quest["end_date"]): quest["id"]
+        for quest in get_quests()
+    }
 
     inserted = 0
     updated = 0
+    quests_inserted = 0
+    quests_updated = 0
     errors = []
 
-    for row_number, date_str, record, parse_error in parsed_rows:
+    for row_number, record_type, display_id, record, parse_error in parsed_rows:
         if parse_error:
-            errors.append({"row": row_number, "date": date_str, "message": parse_error})
+            errors.append(
+                {"row": row_number, "date": display_id, "message": parse_error}
+            )
             continue
 
         try:
-            validate_daily_record(record)
-        except ValueError as error:
-            errors.append({"row": row_number, "date": date_str, "message": str(error)})
-            continue
-
-        try:
-            if date_str in existing_dates:
-                update_daily_record(date_str, record)
-                updated += 1
+            if record_type == "quest":
+                _validate_quest(record)
             else:
-                create_daily_record(record)
-                inserted += 1
-                existing_dates.add(date_str)
+                validate_daily_record(record)
+        except ValueError as error:
+            errors.append(
+                {"row": row_number, "date": display_id, "message": str(error)}
+            )
+            continue
+
+        try:
+            if record_type == "quest":
+                quest_range = (record.start_date, record.end_date)
+                existing_quest_id = existing_quest_ids.get(quest_range)
+                if existing_quest_id is not None:
+                    update_quest(existing_quest_id, record)
+                    quests_updated += 1
+                else:
+                    created_quest = create_quest(record)
+                    existing_quest_ids[quest_range] = created_quest["id"]
+                    quests_inserted += 1
+            else:
+                if display_id in existing_dates:
+                    update_daily_record(display_id, record)
+                    updated += 1
+                else:
+                    create_daily_record(record)
+                    inserted += 1
+                    existing_dates.add(display_id)
         except Exception as error:  # noqa: BLE001 - surface any write failure per-row
-            errors.append({"row": row_number, "date": date_str, "message": str(error)})
+            errors.append(
+                {"row": row_number, "date": display_id, "message": str(error)}
+            )
 
     return {
         "inserted": inserted,
         "updated": updated,
+        "quests_inserted": quests_inserted,
+        "quests_updated": quests_updated,
         "error_count": len(errors),
         "errors": errors[:20],
     }
