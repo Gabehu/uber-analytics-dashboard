@@ -4,7 +4,7 @@ A local full-stack dashboard for tracking Uber delivery earnings, mileage, time,
 
 The goal is to explain what those earnings actually mean: was the day efficient, was it promotion-boosted or tip-carried, and was the mileage/time actually worth it?
 
-**Current version:** v3.12.1
+**Current version:** v3.14.0
 
 ## Tech Stack
 
@@ -13,7 +13,10 @@ The goal is to explain what those earnings actually mean: was the day efficient,
 
 ## Features
 
-- Daily log entry (hours, trips, fare, tips, promotions, wallet balance, notes), opened on demand from the Daily logs section
+- Daily log entry (hours, trips, fare, app tips, optional cash tips, promotions, wallet balance, notes), opened on demand from the Daily logs section
+- **Cash-tip-aware performance** — cash tips remain separate from the Uber wallet while contributing to actual total earnings, hourly rates, per-trip results, mileage efficiency, combined tip share, and weekly totals
+- **Weekly notes** — an optional compact reflection tied to the Sunday week-ending date, shown beneath the generated weekly recap
+- **Editable log dates** — move an existing log to any empty date without changing its database ID; occupied dates are blocked rather than merged, and weekly/quest views recalculate automatically
 - Odometer-based mileage tracking and time tracking (online vs. real work time)
 - **Optional multi-break tracking** — no break fields appear unless requested; each press of Add break creates a removable session whose times pause real work and whose optional odometers exclude break driving from work mileage
 - **Split-shift work sessions** — every advanced daily log starts with Session 1, while Add another session creates removable later work periods; real work and work mileage sum only the tracked sessions, excluding the time and driving between them
@@ -30,7 +33,7 @@ The goal is to explain what those earnings actually mean: was the day efficient,
 - **Animated numbers** — key stats count smoothly and flash on change when you switch days or weeks; purely a visual transition cue, not a judgment (wallet figures included, styled the same as everything else)
 - **Wallet balance** featured on the dashboard (most recent logged value), plus **wallet delta** showing day-over-day and week-over-week change — informational only, not color-judged, since a drop can be a cash-out rather than a loss
 - **Wallet floor** — a manually-set, local-only reference value, edited inline on the Wallet balance card, showing how much of the current balance sits above the floor you deliberately keep resting there (e.g. a Finance sweep-above-floor arrangement); not synced from anywhere, `None` until you set it
-- **Unified CSV backup** of all daily logs, split sessions, breaks, Day Effects, and quest definitions, exported in one click from the Daily logs section
+- **Unified CSV backup** of all daily logs, cash tips, split sessions, breaks, Day Effects, quest definitions, and weekly notes, exported in one click from the Daily logs section
 - **CSV restore with preview** — reads only raw inputs, upserts daily logs by date and quests by date range, then recalculates metrics, quest progress, status, and earned bonuses fresh
 - **Delete all records** — a deliberately out-of-the-way, type-to-confirm action for wiping the database clean (e.g. clearing test data before real use)
 - **Scroll-to-section**: View scrolls to the top of the dashboard, Edit scrolls the form into view, so the UI never leaves you wondering if a click did anything
@@ -159,6 +162,8 @@ It refuses to run over what looks like real accumulated data; pass `--force` to 
 - **v3.11.4** — Made the Quests panel follow the selected date. In selected-day mode, its summary and opened list show only quests covering that day; returning to weekly mode restores every quest overlapping the week.
 - **v3.12** — Expanded the one-file CSV backup/restore format with typed quest-definition rows. Imports preview daily and quest changes separately, upsert quests by date range to avoid duplicates, and recalculate progress/status/earned bonuses from restored trip logs. Older daily-only CSV backups remain compatible.
 - **v3.12.1** — Added explicit spacing around the Daily logs success/error notification area so alerts sit comfortably below the toolbar and leave more room before subsequent content.
+- **v3.13** — Made daily-log dates editable. A log can move in place to an empty date while preserving its row ID; occupied targets return a clear conflict instead of merging data. Successful moves automatically follow the new selected day/week and refresh weekly totals, quest progress, and recaps. Also stabilized the weekly navigation arrows with fixed grid positions around a centered date label.
+- **v3.14** — Added optional cash tips as real performance earnings without changing Uber wallet snapshots or deltas; combined app and cash tips now drive tip share and all earnings-efficiency metrics. Added compact editable weekly notes keyed to each Sunday week-ending date, included both additions in CSV backup/restore, and extended notifications to five seconds for confirmations and eight seconds for errors.
 
 ## What's Next
 

@@ -61,6 +61,11 @@ class WeekSummary(BaseModel):
     wallet_delta: float | None = None
     wallet_delta_start_date: str | None = None
     wallet_delta_end_date: str | None = None
+    notes: str | None = None
+
+
+class WeeklyNoteUpdate(BaseModel):
+    notes: str | None = None
 
 
 class ImportRequest(BaseModel):
@@ -79,6 +84,8 @@ class ImportPreviewResult(BaseModel):
     update_count: int
     quest_new_count: int = 0
     quest_update_count: int = 0
+    weekly_note_new_count: int = 0
+    weekly_note_update_count: int = 0
     error_count: int
     errors: list[ImportError]
 
@@ -88,6 +95,8 @@ class ImportCommitResult(BaseModel):
     updated: int
     quests_inserted: int = 0
     quests_updated: int = 0
+    weekly_notes_inserted: int = 0
+    weekly_notes_updated: int = 0
     error_count: int
     errors: list[ImportError]
 
@@ -131,6 +140,7 @@ class DailyRecordCreate(BaseModel):
     trips: int
     net_fare: float
     tips: float
+    cash_tips: float = 0
     promotions: float
 
     miles_driven: float | None = None
@@ -162,6 +172,7 @@ class DailyRecord(BaseModel):
     trips: int
     net_fare: float
     tips: float
+    cash_tips: float = 0
     promotions: float
 
     total_earnings: float

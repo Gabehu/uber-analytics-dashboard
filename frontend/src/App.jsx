@@ -344,6 +344,7 @@ function createEmptyForm(date = getTodayInputValue()) {
     trips: "",
     net_fare: "",
     tips: "",
+    cash_tips: "",
     promotions: "",
 
     end_home_odometer: "",
@@ -441,7 +442,9 @@ function getStatusTooltip(label, record) {
   const onlineHourly = record ? formatTooltipCurrency(record.avg_hourly) : "not available";
   const promoAmount = record ? formatTooltipCurrency(record.promotions) : "not available";
   const promoShare = formatTooltipPercent(getRecordShare(record, "promotions", "promo_share"));
-  const tipAmount = record ? formatTooltipCurrency(record.tips) : "not available";
+  const tipAmount = record
+    ? formatTooltipCurrency((record.tips || 0) + (record.cash_tips || 0))
+    : "not available";
   const tipShare = formatTooltipPercent(getRecordShare(record, "tips", "tip_share"));
   const workMiles = record ? formatTooltipNumber(record.work_miles, 1) : "not available";
   const perWorkMile = record ? formatTooltipCurrency(record.earnings_per_work_mile) : "not available";
@@ -1050,6 +1053,9 @@ function App() {
   const [questForm, setQuestForm] = useState(() => createEmptyQuestForm());
   const [questError, setQuestError] = useState("");
   const [isSavingQuest, setIsSavingQuest] = useState(false);
+  const [isEditingWeeklyNote, setIsEditingWeeklyNote] = useState(false);
+  const [weeklyNoteDraft, setWeeklyNoteDraft] = useState("");
+  const [isSavingWeeklyNote, setIsSavingWeeklyNote] = useState(false);
 
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
@@ -1456,7 +1462,12 @@ function App() {
   );
 
   const weeklyTips = weeklyRecords.reduce(
-    (total, record) => total + record.tips,
+    (total, record) => total + record.tips + (record.cash_tips || 0),
+    0
+  );
+
+  const weeklyCashTips = weeklyRecords.reduce(
+    (total, record) => total + (record.cash_tips || 0),
     0
   );
 
@@ -1583,10 +1594,16 @@ function App() {
       : weeklyNetFare;
 
   const displayedTips = selectedRecordIsInVisibleWeek
-    ? selectedRecord.tips
+    ? selectedRecord.tips + (selectedRecord.cash_tips || 0)
     : selectedEmptyDayIsInVisibleWeek
       ? 0
       : weeklyTips;
+
+  const displayedCashTips = selectedRecordIsInVisibleWeek
+    ? selectedRecord.cash_tips || 0
+    : selectedEmptyDayIsInVisibleWeek
+      ? 0
+      : weeklyCashTips;
 
   const displayedPromotions = selectedRecordIsInVisibleWeek
     ? selectedRecord.promotions
@@ -2145,17 +2162,26 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (latestRecord && selectedWeekStart === null) {
-      const weekStart = getWeekStart(latestRecord.date);
-      setSelectedWeekStart(formatDateForInput(weekStart));
+    if (selectedWeekStart === null) {
+      if (latestRecord) {
+        const weekStart = getWeekStart(latestRecord.date);
+        setSelectedWeekStart(formatDateForInput(weekStart));
+      } else if (weeks.length > 0) {
+        setSelectedWeekStart(weeks[0].week_start);
+      }
     }
-  }, [latestRecord, selectedWeekStart]);
+  }, [latestRecord, selectedWeekStart, weeks]);
 
   useEffect(() => {
     if (dailyLogPage > totalDailyLogPages) {
       setDailyLogPage(totalDailyLogPages);
     }
   }, [dailyLogPage, totalDailyLogPages]);
+
+  useEffect(() => {
+    setWeeklyNoteDraft(currentWeekData?.notes || "");
+    setIsEditingWeeklyNote(false);
+  }, [selectedWeekStart, currentWeekData?.notes]);
 
   useEffect(() => {
     setDailyLogPage(1);
@@ -2169,18 +2195,19 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!error && !successMessage && !importResult) {
-      return;
-    }
+    if (!error) return;
+    const timerId = setTimeout(() => setError(""), 8000);
+    return () => clearTimeout(timerId);
+  }, [error]);
 
+  useEffect(() => {
+    if (!successMessage && !importResult) return;
     const timerId = setTimeout(() => {
-      setError("");
       setSuccessMessage("");
       setImportResult(null);
-    }, 3000);
-
+    }, 5000);
     return () => clearTimeout(timerId);
-  }, [error, successMessage, importResult]);
+  }, [successMessage, importResult]);
 
   // Deliberately depends on editingDate ONLY, not isFormOpen. Editing a
   // record scrolls the form into view since it can be anywhere in a long
@@ -2326,6 +2353,7 @@ function App() {
       trips: String(record.trips),
       net_fare: String(record.net_fare),
       tips: String(record.tips),
+      cash_tips: formNumber(record.cash_tips),
       promotions: String(record.promotions),
 
       end_home_odometer: formNumber(record.end_home_odometer),
@@ -2429,6 +2457,7 @@ function App() {
       trips: Number(formData.trips),
       net_fare: Number(formData.net_fare),
       tips: Number(formData.tips),
+      cash_tips: formData.cash_tips === "" ? 0 : Number(formData.cash_tips),
       promotions: formData.promotions === "" ? 0 : Number(formData.promotions),
 
       miles_driven: null,
@@ -2489,9 +2518,10 @@ function App() {
     if (
       newRecord.net_fare < 0 ||
       newRecord.tips < 0 ||
+      newRecord.cash_tips < 0 ||
       newRecord.promotions < 0
     ) {
-      setError("Fare, tips, and promotions cannot be negative.");
+      setError("Fare, tips, cash tips, and promotions cannot be negative.");
       return;
     }
 
@@ -2775,8 +2805,13 @@ function App() {
       setSelectedWeekStart(formatDateForInput(savedRecordWeekStart));
 
       if (editingDate) {
+        const originalDate = editingDate;
         setEditingDate(null);
-        setSuccessMessage("Daily record updated.");
+        setSuccessMessage(
+          savedRecord.date !== originalDate
+            ? `Daily record moved to ${formatRecordDate(savedRecord.date)} and updated.`
+            : "Daily record updated."
+        );
       } else {
         setSuccessMessage("Daily record added.");
       }
@@ -2951,10 +2986,41 @@ function App() {
     }
   }
 
+  async function handleSaveWeeklyNote() {
+    if (!currentWeekData || isSavingWeeklyNote) return;
+
+    setIsSavingWeeklyNote(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/weeks/${currentWeekData.week_end}/notes`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notes: optionalText(weeklyNoteDraft) }),
+        }
+      );
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Unable to save the weekly note.");
+      }
+
+      await fetchDashboardData();
+      setIsEditingWeeklyNote(false);
+      setSuccessMessage(
+        weeklyNoteDraft.trim() ? "Weekly note saved." : "Weekly note removed."
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSavingWeeklyNote(false);
+    }
+  }
+
   return (
     <main className="app">
       <section className="hero">
-        <p className="eyebrow">Uber Dashboard v3.12.1</p>
+        <p className="eyebrow">Uber Dashboard v3.14.0</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -3062,7 +3128,11 @@ function App() {
                 </p>
 
                 <div className="week-nav">
-                  <button type="button" onClick={() => changeWeek(-7)}>
+                  <button
+                    type="button"
+                    aria-label="Previous week"
+                    onClick={() => changeWeek(-7)}
+                  >
                     ←
                   </button>
 
@@ -3074,7 +3144,11 @@ function App() {
                         : "Current week"}
                   </h2>
 
-                  <button type="button" onClick={() => changeWeek(7)}>
+                  <button
+                    type="button"
+                    aria-label="Next week"
+                    onClick={() => changeWeek(7)}
+                  >
                     →
                   </button>
                 </div>
@@ -3470,7 +3544,14 @@ function App() {
                 <li>
                   <span className="legend-swatch">
                     <span className="legend-dot legend-dot-tip"></span>
-                    <span className="legend-label">Tips</span>
+                    <span className="legend-label-stack">
+                      <span className="legend-label">Tips</span>
+                      {displayedCashTips > 0 && (
+                        <span className="legend-detail">
+                          ${displayedCashTips.toFixed(2)} cash
+                        </span>
+                      )}
+                    </span>
                   </span>
                   <strong>
                     <AnimatedNumber
@@ -3559,6 +3640,70 @@ function App() {
             </div>
           </div>
         </div>
+
+          {!isSelectedDayMode && currentWeekData && (
+            currentWeekData.notes || isEditingWeeklyNote ? (
+              <div className="weekly-notes-block">
+                <div className="weekly-notes-heading">
+                  <div>
+                    <strong>Weekly notes</strong>
+                  </div>
+                  {!isEditingWeeklyNote && (
+                    <button
+                      type="button"
+                      className="weekly-note-edit-button"
+                      onClick={() => setIsEditingWeeklyNote(true)}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+
+                {isEditingWeeklyNote ? (
+                  <div className="weekly-note-editor">
+                    <textarea
+                      value={weeklyNoteDraft}
+                      onChange={(event) => setWeeklyNoteDraft(event.target.value)}
+                      rows="3"
+                      placeholder="How did this week feel? What stood out?"
+                    />
+                    <div className="weekly-note-actions">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setWeeklyNoteDraft(currentWeekData.notes || "");
+                          setIsEditingWeeklyNote(false);
+                        }}
+                        disabled={isSavingWeeklyNote}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={handleSaveWeeklyNote}
+                        disabled={isSavingWeeklyNote}
+                      >
+                        {isSavingWeeklyNote ? "Saving..." : "Save note"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p>{currentWeekData.notes}</p>
+                )}
+              </div>
+            ) : (
+              <div className="weekly-note-add-row">
+                <button
+                  type="button"
+                  className="weekly-note-edit-button"
+                  onClick={() => setIsEditingWeeklyNote(true)}
+                >
+                  + Add weekly note
+                </button>
+              </div>
+            )
+          )}
 
           {(selectedRecordIsInVisibleWeek || selectedEmptyDayIsInVisibleWeek) && (
             <div className="selected-day-extra">
@@ -3796,7 +3941,9 @@ function App() {
               <strong>{importPreview.update_count}</strong> overwritten.
               {" "}Quests: <strong>{importPreview.quest_new_count ?? 0}</strong>{" "}
               new, <strong>{importPreview.quest_update_count ?? 0}</strong>{" "}
-              updated
+              updated. Weekly notes:{" "}
+              <strong>{importPreview.weekly_note_new_count ?? 0}</strong> new,{" "}
+              <strong>{importPreview.weekly_note_update_count ?? 0}</strong> updated
               {importPreview.error_count > 0 && (
                 <>
                   . <strong>{importPreview.error_count}</strong> row
@@ -3848,7 +3995,9 @@ function App() {
             Import complete: daily logs {importResult.inserted} added and{" "}
             {importResult.updated} updated; quests{" "}
             {importResult.quests_inserted ?? 0} added and{" "}
-            {importResult.quests_updated ?? 0} updated
+            {importResult.quests_updated ?? 0} updated; weekly notes{" "}
+            {importResult.weekly_notes_inserted ?? 0} added and{" "}
+            {importResult.weekly_notes_updated ?? 0} updated
             {importResult.error_count > 0
               ? `, ${importResult.error_count} row${importResult.error_count === 1 ? "" : "s"} skipped.`
               : "."}
@@ -3870,7 +4019,6 @@ function App() {
               value={formData.date}
               onChange={handleInputChange}
               required
-              disabled={editingDate !== null}
             />
           </label>
 
@@ -3925,7 +4073,7 @@ function App() {
           </label>
 
           <label>
-            Tips
+            App tips
             <input
               type="number"
               name="tips"
@@ -3934,6 +4082,18 @@ function App() {
               step="0.01"
               min="0"
               required
+            />
+          </label>
+
+          <label>
+            Cash tips optional
+            <input
+              type="number"
+              name="cash_tips"
+              value={formData.cash_tips}
+              onChange={handleInputChange}
+              step="0.01"
+              min="0"
             />
           </label>
 

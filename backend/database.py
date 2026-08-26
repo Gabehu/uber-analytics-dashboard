@@ -1,9 +1,27 @@
 import json
 import re
 import sqlite3
+from datetime import date as date_cls
 from pathlib import Path
 
 DATABASE_PATH = Path(__file__).parent / "uber_dashboard.db"
+
+
+class DailyDateConflictError(ValueError):
+    """Raised when an edit tries to move a log onto an occupied date."""
+
+    def __init__(self, target_date: str):
+        try:
+            parsed_date = date_cls.fromisoformat(target_date)
+            friendly_date = f"{parsed_date.strftime('%b')} {parsed_date.day}"
+        except (TypeError, ValueError):
+            friendly_date = target_date
+
+        super().__init__(
+            f"A log already exists for {friendly_date}. Choose another date "
+            "or delete/merge the existing entry first."
+        )
+        self.target_date = target_date
 
 
 # ============================================================
@@ -270,8 +288,9 @@ def validate_daily_record(record):
     if record.trips <= 0:
         raise ValueError("Trips must be greater than 0.")
 
-    if record.net_fare < 0 or record.tips < 0 or record.promotions < 0:
-        raise ValueError("Fare, tips, and promotions cannot be negative.")
+    cash_tips = getattr(record, "cash_tips", 0) or 0
+    if record.net_fare < 0 or record.tips < 0 or cash_tips < 0 or record.promotions < 0:
+        raise ValueError("Fare, tips, cash tips, and promotions cannot be negative.")
 
     if end_home_odometer is not None and end_home_odometer < 0:
         raise ValueError("End home odometer cannot be negative.")
@@ -476,13 +495,15 @@ def get_mileage_label(earnings_per_mile):
 
 
 def calculate_daily_metrics(record):
-    total_earnings = record.net_fare + record.tips + record.promotions
+    cash_tips = getattr(record, "cash_tips", 0) or 0
+    combined_tips = record.tips + cash_tips
+    total_earnings = record.net_fare + combined_tips + record.promotions
 
     avg_hourly = total_earnings / record.online_hours if record.online_hours > 0 else 0
     avg_per_trip = total_earnings / record.trips if record.trips > 0 else 0
 
     fare_share = record.net_fare / total_earnings if total_earnings > 0 else 0
-    tip_share = record.tips / total_earnings if total_earnings > 0 else 0
+    tip_share = combined_tips / total_earnings if total_earnings > 0 else 0
     promo_share = record.promotions / total_earnings if total_earnings > 0 else 0
 
     miles_driven = record.miles_driven
@@ -636,6 +657,7 @@ def initialize_database():
             trips INTEGER NOT NULL,
             net_fare REAL NOT NULL,
             tips REAL NOT NULL,
+            cash_tips REAL NOT NULL DEFAULT 0,
             promotions REAL NOT NULL,
 
             total_earnings REAL NOT NULL,
@@ -713,6 +735,15 @@ def initialize_database():
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weekly_notes (
+            week_end TEXT PRIMARY KEY,
+            notes TEXT NOT NULL
+        )
+        """
+    )
+
     # v3.2: if the table already existed from before Day Effects shipped,
     # add the new column in place rather than requiring a fresh DB. Wrapped
     # in try/except since ALTER TABLE ADD COLUMN fails if the column is
@@ -736,6 +767,13 @@ def initialize_database():
             cursor.execute(f"ALTER TABLE daily_logs ADD COLUMN {column_definition}")
         except sqlite3.OperationalError:
             pass
+
+    try:
+        cursor.execute(
+            "ALTER TABLE daily_logs ADD COLUMN cash_tips REAL NOT NULL DEFAULT 0"
+        )
+    except sqlite3.OperationalError:
+        pass
 
     # v3.8.1: promotions are a legitimate part of Uber earnings and often
     # motivate the shift, so the former negative-sounding label is now
@@ -995,6 +1033,7 @@ def get_daily_data():
             trips,
             net_fare,
             tips,
+            cash_tips,
             promotions,
             total_earnings,
             avg_hourly,
@@ -1353,6 +1392,7 @@ def create_daily_record(record):
             trips,
             net_fare,
             tips,
+            cash_tips,
             promotions,
             total_earnings,
             avg_hourly,
@@ -1400,7 +1440,7 @@ def create_daily_record(record):
 
             day_tags
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record.date,
@@ -1408,6 +1448,7 @@ def create_daily_record(record):
             record.trips,
             record.net_fare,
             record.tips,
+            record.cash_tips,
             record.promotions,
             metrics["total_earnings"],
             metrics["avg_hourly"],
@@ -1466,6 +1507,7 @@ def create_daily_record(record):
         "trips": record.trips,
         "net_fare": record.net_fare,
         "tips": record.tips,
+        "cash_tips": record.cash_tips,
         "promotions": record.promotions,
 
         "total_earnings": metrics["total_earnings"],
@@ -1519,18 +1561,37 @@ def create_daily_record(record):
 def update_daily_record(date: str, record):
     validate_daily_record(record)
     metrics = calculate_daily_metrics(record)
+    target_date = record.date
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    # Resolve the source row first and update by its stable primary key. This
+    # lets the unique date change in place without deleting/recreating the
+    # record, so its ID remains unchanged.
+    cursor.execute("SELECT id FROM daily_logs WHERE date = ?", (date,))
+    source_row = cursor.fetchone()
+    if source_row is None:
+        conn.close()
+        return None
+
+    if target_date != date:
+        cursor.execute("SELECT 1 FROM daily_logs WHERE date = ?", (target_date,))
+        if cursor.fetchone() is not None:
+            conn.close()
+            raise DailyDateConflictError(target_date)
+
+    try:
+        cursor.execute(
+            """
         UPDATE daily_logs
         SET
+            date = ?,
             online_hours = ?,
             trips = ?,
             net_fare = ?,
             tips = ?,
+            cash_tips = ?,
             promotions = ?,
             total_earnings = ?,
             avg_hourly = ?,
@@ -1577,13 +1638,15 @@ def update_daily_record(date: str, record):
             notes = ?,
 
             day_tags = ?
-        WHERE date = ?
+        WHERE id = ?
         """,
-        (
+            (
+            target_date,
             record.online_hours,
             record.trips,
             record.net_fare,
             record.tips,
+            record.cash_tips,
             record.promotions,
             metrics["total_earnings"],
             metrics["avg_hourly"],
@@ -1631,9 +1694,12 @@ def update_daily_record(date: str, record):
 
             _day_tags_to_storage(record.day_tags),
 
-            date,
-        ),
-    )
+            source_row["id"],
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        conn.close()
+        raise DailyDateConflictError(target_date) from error
 
     updated_count = cursor.rowcount
 
@@ -1644,11 +1710,12 @@ def update_daily_record(date: str, record):
         return None
 
     return {
-        "date": date,
+        "date": target_date,
         "online_hours": record.online_hours,
         "trips": record.trips,
         "net_fare": record.net_fare,
         "tips": record.tips,
+        "cash_tips": record.cash_tips,
         "promotions": record.promotions,
 
         "total_earnings": metrics["total_earnings"],
@@ -1746,11 +1813,11 @@ import csv
 import io
 
 # Canonical column order for the mixed CSV backup. Daily fields retain their
-# familiar order; quest-definition fields live at the end. record_type keeps
-# both kinds of rows unambiguous while remaining spreadsheet-readable.
+# familiar order; quest and weekly-note fields live at the end. record_type
+# keeps every row type unambiguous while remaining spreadsheet-readable.
 CSV_COLUMNS = [
     "record_type",
-    "date", "online_hours", "trips", "net_fare", "tips", "promotions",
+    "date", "online_hours", "trips", "net_fare", "tips", "cash_tips", "promotions",
     "total_earnings", "avg_hourly", "avg_per_trip",
     "miles_driven", "earnings_per_mile",
     "start_odometer", "end_work_odometer", "end_home_odometer",
@@ -1767,15 +1834,16 @@ CSV_COLUMNS = [
     "quest_start_date", "quest_end_date",
     "quest_first_tier_trips", "quest_first_tier_bonus",
     "quest_final_tier_trips", "quest_final_additional_bonus",
+    "weekly_note_week_end", "weekly_note_notes",
 ]
 
 
 def get_daily_csv():
     """
-    Returns daily logs plus raw quest definitions as one CSV backup. Daily
-    rows are newest first, followed by quest rows. Derived quest progress,
-    status, and earned bonus are intentionally omitted and recalculated on
-    restore from matching daily trips.
+    Returns daily logs, raw quest definitions, and weekly notes as one CSV
+    backup. Daily rows are newest first, followed by quest and weekly-note
+    rows. Derived quest progress, status, and earned bonus are intentionally
+    omitted and recalculated on restore from matching daily trips.
     """
     rows = get_daily_data()
 
@@ -1820,6 +1888,14 @@ def get_daily_csv():
         }
         writer.writerow({key: quest_row.get(key) for key in fieldnames})
 
+    for week_end, notes in get_weekly_notes().items():
+        weekly_note_row = {
+            "record_type": "weekly_note",
+            "weekly_note_week_end": week_end,
+            "weekly_note_notes": notes,
+        }
+        writer.writerow({key: weekly_note_row.get(key) for key in fieldnames})
+
     return buffer.getvalue()
 
 
@@ -1846,7 +1922,8 @@ def get_weekly_series():
     can also feed a mini-chart-per-week view later without a schema change.
     """
     daily_rows = get_daily_data()
-    if not daily_rows:
+    notes_by_week_end = get_weekly_notes()
+    if not daily_rows and not notes_by_week_end:
         return []
 
     earnings_by_date = {}
@@ -1859,6 +1936,9 @@ def get_weekly_series():
     rows_asc = list(reversed(daily_rows))
 
     parsed_dates = [_date.fromisoformat(row["date"]) for row in daily_rows]
+    parsed_dates.extend(
+        _date.fromisoformat(week_end) for week_end in notes_by_week_end
+    )
     first_monday = _monday_of(min(parsed_dates))
     last_monday = _monday_of(max(parsed_dates))
 
@@ -1892,12 +1972,50 @@ def get_weekly_series():
             "wallet_delta": wallet_delta,
             "wallet_delta_start_date": wallet_delta_start_date,
             "wallet_delta_end_date": wallet_delta_end_date,
+            "notes": notes_by_week_end.get(week_end.isoformat()),
         })
 
         current_monday += _timedelta(days=7)
 
     weeks.reverse()
     return weeks
+
+
+def get_weekly_notes():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT week_end, notes FROM weekly_notes ORDER BY week_end DESC"
+    ).fetchall()
+    conn.close()
+    return {row["week_end"]: row["notes"] for row in rows}
+
+
+def set_weekly_note(week_end: str, notes: str | None):
+    try:
+        parsed_week_end = _date.fromisoformat(week_end)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Week end must be a valid date.") from error
+
+    if parsed_week_end.weekday() != 6:
+        raise ValueError("Weekly notes must be tied to a Sunday week-ending date.")
+
+    normalized_notes = notes.strip() if notes else ""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if normalized_notes:
+        cursor.execute(
+            """
+            INSERT INTO weekly_notes (week_end, notes)
+            VALUES (?, ?)
+            ON CONFLICT(week_end) DO UPDATE SET notes = excluded.notes
+            """,
+            (week_end, normalized_notes),
+        )
+    else:
+        cursor.execute("DELETE FROM weekly_notes WHERE week_end = ?", (week_end,))
+    conn.commit()
+    conn.close()
+    return {"week_end": week_end, "notes": normalized_notes or None}
 
 
 # ============================================================
@@ -2075,6 +2193,7 @@ class ImportRecord:
         self.trips = _import_required_int(row.get("trips"))
         self.net_fare = _import_required_float(row.get("net_fare"))
         self.tips = _import_required_float(row.get("tips"))
+        self.cash_tips = _import_required_float(row.get("cash_tips"))
         self.promotions = _import_required_float(row.get("promotions"))
 
         self.miles_driven = _import_optional_float(row.get("miles_driven"))
@@ -2121,10 +2240,21 @@ class ImportQuest:
         )
 
 
+class ImportWeeklyNote:
+    def __init__(self, row):
+        self.week_end = (row.get("weekly_note_week_end") or "").strip()
+        self.notes = _import_optional_text(row.get("weekly_note_notes"))
+
+        if not self.week_end:
+            raise ValueError("Missing weekly note week-ending date")
+        if not self.notes:
+            raise ValueError("Weekly note text is empty")
+
+
 def _parse_import_csv(csv_text):
     """
-    Parses daily and quest rows from a mixed backup. CSVs created before the
-    record_type column existed remain compatible and are treated as all-daily.
+    Parses daily, quest, and weekly-note rows from a mixed backup. CSVs created
+    before record_type existed remain compatible and are treated as all-daily.
     Each tuple is (row_number, record_type, display_id, record, error).
     """
     reader = csv.DictReader(io.StringIO(csv_text))
@@ -2132,7 +2262,7 @@ def _parse_import_csv(csv_text):
 
     for i, row in enumerate(reader, start=2):
         record_type = (row.get("record_type") or "daily").strip().lower()
-        if record_type not in {"daily", "quest"}:
+        if record_type not in {"daily", "quest", "weekly_note"}:
             results.append(
                 (i, record_type, None, None, f"Unknown record_type: {record_type}")
             )
@@ -2147,6 +2277,9 @@ def _parse_import_csv(csv_text):
                     if record.start_date or record.end_date
                     else None
                 )
+            elif record_type == "weekly_note":
+                record = ImportWeeklyNote(row)
+                display_id = record.week_end
             else:
                 display_id = (row.get("date") or "").strip() or None
                 if display_id is None:
@@ -2173,7 +2306,7 @@ def _parse_import_csv(csv_text):
 def preview_csv_import(csv_text):
     """
     Dry run: parses and validates every row but writes nothing. Returns
-    counts of new/updated daily logs and quests, plus invalid rows (with
+    counts of new/updated daily logs, quests, and weekly notes, plus invalid rows (with
     reasons for up to the first 20, to keep the response small).
     """
     parsed_rows = _parse_import_csv(csv_text)
@@ -2182,13 +2315,17 @@ def preview_csv_import(csv_text):
         (quest["start_date"], quest["end_date"])
         for quest in get_quests()
     }
+    existing_weekly_note_dates = set(get_weekly_notes())
     seen_dates_in_file = set()
     seen_quest_ranges_in_file = set()
+    seen_weekly_note_dates_in_file = set()
 
     new_count = 0
     update_count = 0
     quest_new_count = 0
     quest_update_count = 0
+    weekly_note_new_count = 0
+    weekly_note_update_count = 0
     errors = []
 
     for row_number, record_type, display_id, record, parse_error in parsed_rows:
@@ -2201,6 +2338,10 @@ def preview_csv_import(csv_text):
         try:
             if record_type == "quest":
                 _validate_quest(record)
+            elif record_type == "weekly_note":
+                parsed_week_end = _date.fromisoformat(record.week_end)
+                if parsed_week_end.weekday() != 6:
+                    raise ValueError("Weekly note date must be a Sunday.")
             else:
                 validate_daily_record(record)
         except ValueError as error:
@@ -2219,6 +2360,15 @@ def preview_csv_import(csv_text):
             else:
                 quest_new_count += 1
             seen_quest_ranges_in_file.add(quest_range)
+        elif record_type == "weekly_note":
+            if (
+                record.week_end in existing_weekly_note_dates
+                or record.week_end in seen_weekly_note_dates_in_file
+            ):
+                weekly_note_update_count += 1
+            else:
+                weekly_note_new_count += 1
+            seen_weekly_note_dates_in_file.add(record.week_end)
         else:
             if display_id in existing_dates or display_id in seen_dates_in_file:
                 update_count += 1
@@ -2233,6 +2383,8 @@ def preview_csv_import(csv_text):
         "update_count": update_count,
         "quest_new_count": quest_new_count,
         "quest_update_count": quest_update_count,
+        "weekly_note_new_count": weekly_note_new_count,
+        "weekly_note_update_count": weekly_note_update_count,
         "error_count": len(errors),
         "errors": errors[:20],
     }
@@ -2240,9 +2392,9 @@ def preview_csv_import(csv_text):
 
 def commit_csv_import(csv_text):
     """
-    Actually performs the mixed import. Daily rows upsert by date; quest
-    definitions upsert by their date range. Computed progress/status is never
-    imported and is derived from the restored daily trip totals.
+    Actually performs the mixed import. Daily rows upsert by date, quest
+    definitions by date range, and weekly notes by Sunday week-ending date.
+    Computed quest progress/status is derived from restored daily trip totals.
     """
     parsed_rows = _parse_import_csv(csv_text)
     existing_dates = {row["date"] for row in get_daily_data()}
@@ -2250,11 +2402,14 @@ def commit_csv_import(csv_text):
         (quest["start_date"], quest["end_date"]): quest["id"]
         for quest in get_quests()
     }
+    existing_weekly_note_dates = set(get_weekly_notes())
 
     inserted = 0
     updated = 0
     quests_inserted = 0
     quests_updated = 0
+    weekly_notes_inserted = 0
+    weekly_notes_updated = 0
     errors = []
 
     for row_number, record_type, display_id, record, parse_error in parsed_rows:
@@ -2267,6 +2422,10 @@ def commit_csv_import(csv_text):
         try:
             if record_type == "quest":
                 _validate_quest(record)
+            elif record_type == "weekly_note":
+                parsed_week_end = _date.fromisoformat(record.week_end)
+                if parsed_week_end.weekday() != 6:
+                    raise ValueError("Weekly note date must be a Sunday.")
             else:
                 validate_daily_record(record)
         except ValueError as error:
@@ -2286,6 +2445,14 @@ def commit_csv_import(csv_text):
                     created_quest = create_quest(record)
                     existing_quest_ids[quest_range] = created_quest["id"]
                     quests_inserted += 1
+            elif record_type == "weekly_note":
+                existed = record.week_end in existing_weekly_note_dates
+                set_weekly_note(record.week_end, record.notes)
+                if existed:
+                    weekly_notes_updated += 1
+                else:
+                    weekly_notes_inserted += 1
+                    existing_weekly_note_dates.add(record.week_end)
             else:
                 if display_id in existing_dates:
                     update_daily_record(display_id, record)
@@ -2304,6 +2471,8 @@ def commit_csv_import(csv_text):
         "updated": updated,
         "quests_inserted": quests_inserted,
         "quests_updated": quests_updated,
+        "weekly_notes_inserted": weekly_notes_inserted,
+        "weekly_notes_updated": weekly_notes_updated,
         "error_count": len(errors),
         "errors": errors[:20],
     }

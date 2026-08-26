@@ -5,6 +5,7 @@ from datetime import date as date_cls
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from database import (
+    DailyDateConflictError,
     initialize_database,
     get_summary_data,
     get_daily_data,
@@ -22,12 +23,14 @@ from database import (
     create_quest,
     update_quest,
     delete_quest,
+    set_weekly_note,
 )
 from schemas import (
     Summary,
     DailyRecord,
     DailyRecordCreate,
     WeekSummary,
+    WeeklyNoteUpdate,
     ImportRequest,
     ImportPreviewResult,
     ImportCommitResult,
@@ -49,7 +52,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Uber Dashboard API",
     description="Local API for Uber Nest Tracker",
-    version="3.12.1",
+    version="3.14.0",
     lifespan=lifespan,
 )
 
@@ -128,6 +131,14 @@ def weeks():
     return get_weekly_series()
 
 
+@app.put("/api/weeks/{week_end}/notes")
+def update_weekly_note(week_end: str, payload: WeeklyNoteUpdate):
+    try:
+        return set_weekly_note(week_end, payload.notes)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
 @app.post("/api/daily/import/preview", response_model=ImportPreviewResult)
 def import_preview(payload: ImportRequest):
     return preview_csv_import(payload.csv_text)
@@ -173,6 +184,11 @@ def create_daily(record: DailyRecordCreate):
 def update_daily(date: str, record: DailyRecordCreate):
     try:
         updated_record = update_daily_record(date, record)
+    except DailyDateConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=str(error)
+        )
     except ValueError as error:
         raise HTTPException(
             status_code=400,

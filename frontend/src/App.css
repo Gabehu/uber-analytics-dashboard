@@ -1759,6 +1759,120 @@ th {
   margin: 0 auto;
 }
 
+.weekly-notes-block {
+  position: relative;
+  margin-top: 16px;
+  padding: 12px 58px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
+}
+
+.weekly-notes-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.weekly-notes-heading > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.weekly-notes-heading strong {
+  color: var(--text-secondary);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.weekly-notes-block > p {
+  max-width: 900px;
+  margin: 8px auto 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.weekly-note-edit-button {
+  padding: 6px 10px;
+  color: var(--accent-text);
+  font-size: 12px;
+}
+
+.weekly-notes-block > .weekly-notes-heading .weekly-note-edit-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.weekly-note-add-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.weekly-note-add-row .weekly-note-edit-button {
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.weekly-note-add-row .weekly-note-edit-button:hover {
+  border-color: var(--border);
+  color: var(--accent-text);
+}
+
+.weekly-note-editor {
+  margin-top: 10px;
+  text-align: left;
+}
+
+.weekly-note-editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 92px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.weekly-note-editor textarea:hover {
+  border-color: var(--border-strong);
+}
+
+.weekly-note-editor textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg-surface-1);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.weekly-note-editor textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.weekly-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.weekly-note-actions button {
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
 .break-time-summary {
   display: block;
   margin-top: 4px;
@@ -2446,6 +2560,12 @@ th {
   color: var(--text-secondary);
 }
 
+.legend-label-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .earnings-donut-legend strong {
   color: var(--text-primary);
   font-size: 14px;
@@ -2457,6 +2577,12 @@ th {
   min-width: 42px;
   text-align: right;
   font-weight: 600;
+}
+
+.legend-detail {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .legend-percent-fare {
@@ -2490,13 +2616,16 @@ th {
 }
 
 .week-nav {
-  display: flex;
+  display: grid;
+  grid-template-columns: 32px 170px 32px;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .week-nav h2 {
   margin: 0;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .week-nav button,
@@ -2556,6 +2685,10 @@ th {
 }
 
 @media (max-width: 700px) {
+  .week-nav {
+    grid-template-columns: 32px 155px 32px;
+  }
+
   .week-jump-controls {
     width: 100%;
   }

@@ -48,6 +48,7 @@ class MockRecord:
         self.trips = data["trips"]
         self.net_fare = data["net_fare"]
         self.tips = data["tips"]
+        self.cash_tips = data.get("cash_tips", 0)
         self.promotions = data.get("promotions", 0)
 
         self.miles_driven = data.get("miles_driven")
