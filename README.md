@@ -4,7 +4,7 @@ A local full-stack dashboard for tracking Uber delivery earnings, mileage, time,
 
 The goal is to explain what those earnings actually mean: was the day efficient, was it promotion-boosted or tip-carried, and was the mileage/time actually worth it?
 
-**Current version:** v3.14.0
+**Current version:** v4.0.0
 
 ## Tech Stack
 
@@ -17,6 +17,9 @@ The goal is to explain what those earnings actually mean: was the day efficient,
 - **Cash-tip-aware performance** — cash tips remain separate from the Uber wallet while contributing to actual total earnings, hourly rates, per-trip results, mileage efficiency, combined tip share, and weekly totals
 - **Weekly notes** — an optional compact reflection tied to the Sunday week-ending date, shown beneath the generated weekly recap
 - **Editable log dates** — move an existing log to any empty date without changing its database ID; occupied dates are blocked rather than merged, and weekly/quest views recalculate automatically
+- **Responsive mobile companion** — the same React app becomes capture-first on phones and small tablets, with focused Today, Earnings, and More destinations while preserving the full analysis-first desktop dashboard
+- **Mobile Quick Update** — update trips, fare, app tips, cash tips, and promotions in a compact bottom sheet without touching optional mileage, session, or context fields
+- **Persistent live mobile tracking** — start sessions without creating a log first, record optional odometers at every session/break boundary, safely close the app between actions, resume from breaks, add later sessions, and merge the completed draft into the normal editable daily form when earnings settle
 - Odometer-based mileage tracking and time tracking (online vs. real work time)
 - **Optional multi-break tracking** — no break fields appear unless requested; each press of Add break creates a removable session whose times pause real work and whose optional odometers exclude break driving from work mileage
 - **Split-shift work sessions** — every advanced daily log starts with Session 1, while Add another session creates removable later work periods; real work and work mileage sum only the tracked sessions, excluding the time and driving between them
@@ -164,6 +167,7 @@ It refuses to run over what looks like real accumulated data; pass `--force` to 
 - **v3.12.1** — Added explicit spacing around the Daily logs success/error notification area so alerts sit comfortably below the toolbar and leave more room before subsequent content.
 - **v3.13** — Made daily-log dates editable. A log can move in place to an empty date while preserving its row ID; occupied targets return a clear conflict instead of merging data. Successful moves automatically follow the new selected day/week and refresh weekly totals, quest progress, and recaps. Also stabilized the weekly navigation arrows with fixed grid positions around a centered date label.
 - **v3.14** — Added optional cash tips as real performance earnings without changing Uber wallet snapshots or deltas; combined app and cash tips now drive tip share and all earnings-efficiency metrics. Added compact editable weekly notes keyed to each Sunday week-ending date, included both additions in CSV backup/restore, and extended notifications to five seconds for confirmations and eight seconds for errors.
+- **v4.0** — Added a responsive capture-first mobile experience without replacing the desktop analytics dashboard. Phones and small tablets use Today, Earnings, and More: Today supports either manual entry or backend-persisted live session/break drafts with thumb-zone controls, Earnings provides an animated weekly overview plus interactive inline daily details and the last-known wallet, and More groups quest, wallet, backup, and data management. The shared day editor becomes a structured full-screen mobile form, and all motion honors reduced-motion preferences. Added exact-width overflow checks and backend regression tests for persistent drafts, date moves/conflicts, session and break calculations, split-session mileage, and quest recalculation.
 
 ## What's Next
 

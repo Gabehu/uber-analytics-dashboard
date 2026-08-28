@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Summary(BaseModel):
@@ -132,6 +132,31 @@ class WorkSessionCreate(BaseModel):
 class WorkSession(WorkSessionCreate):
     duration_hours: float
     miles: float | None = None
+
+
+class DraftBreak(BaseModel):
+    start_time: str
+    end_time: str | None = None
+    start_odometer: float | None = None
+    end_odometer: float | None = None
+
+
+class DraftWorkSession(BaseModel):
+    start_time: str
+    stop_time: str | None = None
+    start_odometer: float | None = None
+    stop_odometer: float | None = None
+    breaks: list[DraftBreak] = Field(default_factory=list)
+
+
+class DailyDraftUpsert(BaseModel):
+    date: str
+    sessions: list[DraftWorkSession] = Field(default_factory=list)
+
+
+class DailyDraft(DailyDraftUpsert):
+    status: str
+    updated_at: str
 
 
 class DailyRecordCreate(BaseModel):

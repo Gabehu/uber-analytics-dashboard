@@ -24,6 +24,9 @@ from database import (
     update_quest,
     delete_quest,
     set_weekly_note,
+    get_daily_drafts,
+    upsert_daily_draft,
+    delete_daily_draft,
 )
 from schemas import (
     Summary,
@@ -40,6 +43,8 @@ from schemas import (
     WalletFloorUpdate,
     Quest,
     QuestCreate,
+    DailyDraft,
+    DailyDraftUpsert,
 )
 
 
@@ -52,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Uber Dashboard API",
     description="Local API for Uber Nest Tracker",
-    version="3.14.0",
+    version="4.0.0",
     lifespan=lifespan,
 )
 
@@ -124,6 +129,28 @@ def remove_quest(quest_id: int):
 @app.get("/api/daily", response_model=list[DailyRecord])
 def daily():
     return get_daily_data()
+
+
+@app.get("/api/drafts", response_model=list[DailyDraft])
+def drafts():
+    return get_daily_drafts()
+
+
+@app.put("/api/drafts/{date}", response_model=DailyDraft)
+def save_draft(date: str, payload: DailyDraftUpsert):
+    if payload.date != date:
+        raise HTTPException(status_code=400, detail="Draft URL and payload dates must match.")
+    try:
+        return upsert_daily_draft(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.delete("/api/drafts/{date}")
+def remove_draft(date: str):
+    if delete_daily_draft(date) == 0:
+        raise HTTPException(status_code=404, detail="No draft found for this date.")
+    return {"message": "Draft deleted.", "date": date}
 
 
 @app.get("/api/weeks", response_model=list[WeekSummary])

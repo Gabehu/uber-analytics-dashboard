@@ -744,6 +744,19 @@ def initialize_database():
         """
     )
 
+    # Live tracking is intentionally separate from finalized daily logs.
+    # Draft sessions may have an open stop/break endpoint, which would be
+    # invalid in daily_logs but is exactly what a running mobile timer needs.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_drafts (
+            date TEXT PRIMARY KEY,
+            sessions_json TEXT NOT NULL DEFAULT '[]',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
     # v3.2: if the table already existed from before Day Effects shipped,
     # add the new column in place rather than requiring a fresh DB. Wrapped
     # in try/except since ALTER TABLE ADD COLUMN fails if the column is
@@ -1330,6 +1343,166 @@ def create_quest(quest):
     conn.commit()
     conn.close()
     return _quest_response(_quest_rows("WHERE q.id = ?", (quest_id,))[0])
+
+
+def _draft_value(item, key, default=None):
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _draft_sessions_to_dicts(sessions):
+    return [
+        {
+            "start_time": _draft_value(session, "start_time"),
+            "stop_time": _draft_value(session, "stop_time"),
+            "start_odometer": _draft_value(session, "start_odometer"),
+            "stop_odometer": _draft_value(session, "stop_odometer"),
+            "breaks": [
+                {
+                    "start_time": _draft_value(item, "start_time"),
+                    "end_time": _draft_value(item, "end_time"),
+                    "start_odometer": _draft_value(item, "start_odometer"),
+                    "end_odometer": _draft_value(item, "end_odometer"),
+                }
+                for item in (_draft_value(session, "breaks", []) or [])
+            ],
+        }
+        for session in (sessions or [])
+    ]
+
+
+def _draft_status(sessions):
+    if not sessions:
+        return "not_started"
+    final_session = sessions[-1]
+    if final_session.get("stop_time"):
+        return "between_sessions"
+    final_breaks = final_session.get("breaks") or []
+    if final_breaks and not final_breaks[-1].get("end_time"):
+        return "on_break"
+    return "working"
+
+
+def validate_daily_draft(draft):
+    try:
+        date_cls.fromisoformat(draft.date)
+    except (TypeError, ValueError):
+        raise ValueError("Draft date must use YYYY-MM-DD format.")
+
+    sessions = _draft_sessions_to_dicts(draft.sessions)
+    previous_stop = None
+    previous_stop_odometer = None
+    for session_index, session in enumerate(sessions):
+        start = parse_12_hour_time_to_minutes(session["start_time"])
+        stop = parse_12_hour_time_to_minutes(session["stop_time"])
+        is_last = session_index == len(sessions) - 1
+        if start is None:
+            raise ValueError(f"Session {session_index + 1} needs a valid start time.")
+        if session["stop_time"] is not None and stop is None:
+            raise ValueError(f"Session {session_index + 1} needs a valid stop time.")
+        if stop is not None and stop <= start:
+            raise ValueError(f"Session {session_index + 1} stop time must be later than its start.")
+        if stop is None and not is_last:
+            raise ValueError("Only the latest session may remain open.")
+        if previous_stop is not None and start < previous_stop:
+            raise ValueError("Draft sessions cannot overlap and must stay in time order.")
+
+        start_odo = session["start_odometer"]
+        stop_odo = session["stop_odometer"]
+        if any(value is not None and value < 0 for value in (start_odo, stop_odo)):
+            raise ValueError("Session odometers cannot be negative.")
+        if start_odo is not None and stop_odo is not None and stop_odo < start_odo:
+            raise ValueError("Session stop odometer cannot be lower than its start.")
+        if start_odo is not None and previous_stop_odometer is not None and start_odo < previous_stop_odometer:
+            raise ValueError("Session odometers must stay in trip order.")
+
+        previous_break_end = None
+        for break_index, break_item in enumerate(session["breaks"]):
+            break_start = parse_12_hour_time_to_minutes(break_item["start_time"])
+            break_end = parse_12_hour_time_to_minutes(break_item["end_time"])
+            is_last_break = break_index == len(session["breaks"]) - 1
+            if break_start is None or break_start < start:
+                raise ValueError(f"Break {break_index + 1} needs a valid start inside its session.")
+            if break_item["end_time"] is not None and break_end is None:
+                raise ValueError(f"Break {break_index + 1} needs a valid end time.")
+            if break_end is not None and break_end <= break_start:
+                raise ValueError(f"Break {break_index + 1} end must be later than its start.")
+            if break_end is None and (not is_last or not is_last_break or stop is not None):
+                raise ValueError("Only the latest break in an open session may remain active.")
+            if stop is not None and break_end is not None and break_end > stop:
+                raise ValueError(f"Break {break_index + 1} must end inside its session.")
+            if previous_break_end is not None and break_start < previous_break_end:
+                raise ValueError("Draft breaks cannot overlap and must stay in time order.")
+            break_start_odo = break_item["start_odometer"]
+            break_end_odo = break_item["end_odometer"]
+            if any(value is not None and value < 0 for value in (break_start_odo, break_end_odo)):
+                raise ValueError("Break odometers cannot be negative.")
+            if break_start_odo is not None and break_end_odo is not None and break_end_odo < break_start_odo:
+                raise ValueError("Break end odometer cannot be lower than its start.")
+            if break_end is not None:
+                previous_break_end = break_end
+
+        if stop is not None:
+            previous_stop = stop
+        if stop_odo is not None:
+            previous_stop_odometer = stop_odo
+    return sessions
+
+
+def get_daily_drafts():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT date, sessions_json, updated_at FROM daily_drafts ORDER BY date DESC"
+    ).fetchall()
+    conn.close()
+    drafts = []
+    for row in rows:
+        sessions = json.loads(row["sessions_json"] or "[]")
+        drafts.append({
+            "date": row["date"],
+            "sessions": sessions,
+            "status": _draft_status(sessions),
+            "updated_at": row["updated_at"],
+        })
+    return drafts
+
+
+def upsert_daily_draft(draft):
+    sessions = validate_daily_draft(draft)
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO daily_drafts (date, sessions_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(date) DO UPDATE SET
+            sessions_json = excluded.sessions_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (draft.date, json.dumps(sessions, separators=(",", ":"))),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT date, sessions_json, updated_at FROM daily_drafts WHERE date = ?",
+        (draft.date,),
+    ).fetchone()
+    conn.close()
+    stored_sessions = json.loads(row["sessions_json"] or "[]")
+    return {
+        "date": row["date"],
+        "sessions": stored_sessions,
+        "status": _draft_status(stored_sessions),
+        "updated_at": row["updated_at"],
+    }
+
+
+def delete_daily_draft(date):
+    conn = get_connection()
+    cursor = conn.execute("DELETE FROM daily_drafts WHERE date = ?", (date,))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    return deleted
 
 
 def update_quest(quest_id, quest):

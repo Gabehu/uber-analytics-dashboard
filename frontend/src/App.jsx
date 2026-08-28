@@ -304,6 +304,27 @@ function getTodayInputValue() {
   return toLocalInputDate(new Date());
 }
 
+function getCurrentTimeParts() {
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const meridiem = hours >= 12 ? "PM" : "AM";
+  const displayHour = hours % 12 || 12;
+
+  return {
+    stored: `${displayHour}:${minutes} ${meridiem}`,
+    display: `${displayHour}:${minutes} ${meridiem}`,
+  };
+}
+
+function formatMobileDate(dateString) {
+  return new Date(`${dateString}T00:00:00`).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function createEmptyBreak() {
   return {
     start_time_value: "",
@@ -946,7 +967,7 @@ const ANIMATED_NUMBER_FLASH_MS = 800;
 // wallet balance dropping could be a cash-out, not a loss). Skips the
 // animation entirely on first mount so numbers don't count up from zero
 // when the page first loads.
-function AnimatedNumber({ value, format }) {
+function AnimatedNumber({ value, format, flash = true }) {
   const [displayValue, setDisplayValue] = useState(value);
   const [flashClass, setFlashClass] = useState("");
 
@@ -970,7 +991,16 @@ function AnimatedNumber({ value, format }) {
       return;
     }
 
-    setFlashClass(endValue > startValue ? "animated-number-up" : "animated-number-down");
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setDisplayValue(endValue);
+      previousValueRef.current = endValue;
+      setFlashClass("");
+      return;
+    }
+
+    setFlashClass(
+      flash ? (endValue > startValue ? "animated-number-up" : "animated-number-down") : ""
+    );
 
     const startTime = performance.now();
 
@@ -1001,7 +1031,7 @@ function AnimatedNumber({ value, format }) {
         clearTimeout(flashTimeoutRef.current);
       }
     };
-  }, [value]);
+  }, [flash, value]);
 
   return <span className={`animated-number ${flashClass}`}>{format(displayValue)}</span>;
 }
@@ -1056,6 +1086,25 @@ function App() {
   const [isEditingWeeklyNote, setIsEditingWeeklyNote] = useState(false);
   const [weeklyNoteDraft, setWeeklyNoteDraft] = useState("");
   const [isSavingWeeklyNote, setIsSavingWeeklyNote] = useState(false);
+  const [mobileTab, setMobileTab] = useState("today");
+  const [isQuickUpdateOpen, setIsQuickUpdateOpen] = useState(false);
+  const [isSavingQuickUpdate, setIsSavingQuickUpdate] = useState(false);
+  const [quickUpdateForm, setQuickUpdateForm] = useState({
+    trips: "",
+    net_fare: "",
+    tips: "",
+    cash_tips: "",
+    promotions: "",
+  });
+  const [mobileDrafts, setMobileDrafts] = useState([]);
+  const [mobileTrackingAction, setMobileTrackingAction] = useState(null);
+  const [isSavingMobileTracking, setIsSavingMobileTracking] = useState(false);
+  const [mobileTrackingForm, setMobileTrackingForm] = useState({
+    time_value: "",
+    meridiem: "PM",
+    odometer: "",
+  });
+  const [draftBeingFinalizedDate, setDraftBeingFinalizedDate] = useState(null);
 
   function getWeekStart(dateString) {
     const date = new Date(`${dateString}T00:00:00`);
@@ -1541,6 +1590,36 @@ function App() {
     ? weeks.find((week) => week.week_start === selectedWeekStart)
     : null;
 
+  const mobileDayDate = selectedRecordDate || getTodayInputValue();
+  const mobileDayRecord =
+    dailyRecords.find((record) => record.date === mobileDayDate) || null;
+  const mobileDayQuests = quests
+    .filter(
+      (quest) =>
+        quest.start_date <= mobileDayDate && quest.end_date >= mobileDayDate
+    )
+    .sort((left, right) => {
+      const priority = { Active: 0, Completed: 1, Scheduled: 2, Failed: 3 };
+      return (priority[left.status] ?? 4) - (priority[right.status] ?? 4);
+    });
+  const mobileFeaturedQuest = mobileDayQuests[0] || null;
+  const mobileSortedQuests = [...quests].sort((left, right) => {
+    const priority = { Active: 0, Scheduled: 1, Completed: 2, Failed: 3 };
+    const statusDifference =
+      (priority[left.status] ?? 4) - (priority[right.status] ?? 4);
+    return statusDifference || right.start_date.localeCompare(left.start_date);
+  });
+  const activeMobileShift =
+    mobileDrafts.find((draft) => draft.date === mobileDayDate) || null;
+  const activeMobileSession = activeMobileShift?.sessions?.at(-1) || null;
+  const activeMobileBreak = activeMobileSession?.breaks?.at(-1) || null;
+  const isMobileSessionRunning = Boolean(
+    activeMobileSession && !activeMobileSession.stop_time
+  );
+  const isMobileBreakRunning = Boolean(
+    isMobileSessionRunning && activeMobileBreak && !activeMobileBreak.end_time
+  );
+
   const displayedTotalEarnings = selectedRecordIsInVisibleWeek
     ? selectedRecord.total_earnings
     : selectedEmptyDayIsInVisibleWeek
@@ -1964,12 +2043,14 @@ function App() {
       const dailyResponse = await fetch(`${API_BASE_URL}/api/daily`);
       const weeksResponse = await fetch(`${API_BASE_URL}/api/weeks`);
       const questsResponse = await fetch(`${API_BASE_URL}/api/quests`);
+      const draftsResponse = await fetch(`${API_BASE_URL}/api/drafts`);
 
       if (
         !summaryResponse.ok ||
         !dailyResponse.ok ||
         !weeksResponse.ok ||
-        !questsResponse.ok
+        !questsResponse.ok ||
+        !draftsResponse.ok
       ) {
         throw new Error("Failed to fetch dashboard data.");
       }
@@ -1978,11 +2059,13 @@ function App() {
       const dailyData = await dailyResponse.json();
       const weeksData = await weeksResponse.json();
       const questsData = await questsResponse.json();
+      const draftsData = await draftsResponse.json();
 
       setSummary(summaryData);
       setDailyRecords(dailyData);
       setWeeks(weeksData);
       setQuests(questsData);
+      setMobileDrafts(draftsData);
     } catch (err) {
       setError(err.message);
     }
@@ -2420,6 +2503,285 @@ function App() {
     setSuccessMessage("");
   }
 
+  function dailyRecordToPayload(record, overrides = {}) {
+    const workSessions = overrides.work_sessions ?? record.work_sessions ?? [];
+    const breakSessions = overrides.breaks ?? record.breaks ?? [];
+    const firstSession = workSessions[0] || null;
+
+    return {
+      date: overrides.date ?? record.date,
+      online_hours: overrides.online_hours ?? record.online_hours,
+      trips: overrides.trips ?? record.trips,
+      net_fare: overrides.net_fare ?? record.net_fare,
+      tips: overrides.tips ?? record.tips,
+      cash_tips: overrides.cash_tips ?? record.cash_tips ?? 0,
+      promotions: overrides.promotions ?? record.promotions,
+      miles_driven: record.miles_driven,
+      start_odometer: firstSession?.start_odometer ?? record.start_odometer,
+      end_work_odometer: firstSession?.stop_odometer ?? record.end_work_odometer,
+      end_home_odometer: record.end_home_odometer,
+      work_start_time: firstSession?.start_time ?? record.work_start_time,
+      uber_stop_time: firstSession?.stop_time ?? record.uber_stop_time,
+      home_end_time: record.home_end_time,
+      additional_sessions:
+        workSessions.length > 1
+          ? workSessions.slice(1).map((session) => ({
+              start_time: session.start_time,
+              stop_time: session.stop_time,
+              start_odometer: session.start_odometer,
+              stop_odometer: session.stop_odometer,
+            }))
+          : null,
+      breaks:
+        breakSessions.length > 0
+          ? breakSessions.map((session) => ({
+              start_time: session.start_time,
+              end_time: session.end_time,
+              start_odometer: session.start_odometer,
+              end_odometer: session.end_odometer,
+            }))
+          : null,
+      wallet_balance: record.wallet_balance,
+      notes: record.notes,
+      day_tags: record.day_tags,
+    };
+  }
+
+  function openQuickUpdate(record) {
+    if (!record) return;
+    setQuickUpdateForm({
+      trips: String(record.trips),
+      net_fare: String(record.net_fare),
+      tips: String(record.tips),
+      cash_tips: formNumber(record.cash_tips),
+      promotions: String(record.promotions),
+    });
+    setError("");
+    setIsQuickUpdateOpen(true);
+  }
+
+  async function saveQuickUpdate(event) {
+    event.preventDefault();
+    if (!mobileDayRecord || isSavingQuickUpdate) return;
+
+    const values = {
+      trips: Number(quickUpdateForm.trips),
+      net_fare: Number(quickUpdateForm.net_fare),
+      tips: Number(quickUpdateForm.tips),
+      cash_tips:
+        quickUpdateForm.cash_tips === "" ? 0 : Number(quickUpdateForm.cash_tips),
+      promotions:
+        quickUpdateForm.promotions === "" ? 0 : Number(quickUpdateForm.promotions),
+    };
+
+    if (!Number.isInteger(values.trips) || values.trips <= 0) {
+      setError("Trips must be a whole number greater than 0.");
+      return;
+    }
+    if (
+      [values.net_fare, values.tips, values.cash_tips, values.promotions].some(
+        (value) => !Number.isFinite(value) || value < 0
+      )
+    ) {
+      setError("Earnings values must be valid non-negative numbers.");
+      return;
+    }
+
+    setIsSavingQuickUpdate(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/daily/${mobileDayRecord.date}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(dailyRecordToPayload(mobileDayRecord, values)),
+        }
+      );
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Unable to update this day.");
+      }
+      setIsQuickUpdateOpen(false);
+      setSuccessMessage("Quick update saved.");
+      await fetchDashboardData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSavingQuickUpdate(false);
+    }
+  }
+
+  function openMobileTrackingAction(action) {
+    const currentTime = getCurrentTimeParts();
+    const parts = splitStoredTime(currentTime.stored);
+    setMobileTrackingForm({
+      time_value: parts.timeValue,
+      meridiem: parts.meridiem,
+      odometer: "",
+    });
+    setError("");
+    setMobileTrackingAction(action);
+  }
+
+  async function persistMobileDraft(date, sessions) {
+    const response = await fetch(`${API_BASE_URL}/api/drafts/${date}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date, sessions }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Unable to save live tracking.");
+    }
+    const savedDraft = await response.json();
+    setMobileDrafts((current) => [
+      savedDraft,
+      ...current.filter((draft) => draft.date !== savedDraft.date),
+    ]);
+    return savedDraft;
+  }
+
+  async function handleMobileTrackingSubmit(event) {
+    event.preventDefault();
+    if (!mobileTrackingAction || isSavingMobileTracking) return;
+    if (!isValidTimeValue(mobileTrackingForm.time_value)) {
+      setError("Time must look like 5, 5:30, or 12:05.");
+      return;
+    }
+
+    const timestamp = combineTimeInput(
+      mobileTrackingForm.time_value,
+      mobileTrackingForm.meridiem
+    );
+    const odometer = optionalNumber(mobileTrackingForm.odometer);
+    if (odometer !== null && (!Number.isFinite(odometer) || odometer < 0)) {
+      setError("Odometer must be a valid non-negative number.");
+      return;
+    }
+
+    const sessions = structuredClone(activeMobileShift?.sessions || []);
+    const actionLabels = {
+      start_session: "Session started",
+      start_break: "Break started",
+      resume_session: "Break ended",
+      end_session: "Session ended",
+    };
+
+    if (mobileTrackingAction === "start_session") {
+      if (isMobileSessionRunning) {
+        setError("End the active session before starting another one.");
+        return;
+      }
+      sessions.push({
+        start_time: timestamp,
+        stop_time: null,
+        start_odometer: odometer,
+        stop_odometer: null,
+        breaks: [],
+      });
+    } else if (mobileTrackingAction === "start_break") {
+      if (!isMobileSessionRunning || isMobileBreakRunning) return;
+      sessions[sessions.length - 1].breaks.push({
+        start_time: timestamp,
+        end_time: null,
+        start_odometer: odometer,
+        end_odometer: null,
+      });
+    } else if (mobileTrackingAction === "resume_session") {
+      if (!isMobileBreakRunning) return;
+      const breaks = sessions[sessions.length - 1].breaks;
+      breaks[breaks.length - 1].end_time = timestamp;
+      breaks[breaks.length - 1].end_odometer = odometer;
+    } else if (mobileTrackingAction === "end_session") {
+      if (!isMobileSessionRunning) return;
+      const session = sessions[sessions.length - 1];
+      if (isMobileBreakRunning) {
+        const breaks = session.breaks;
+        breaks[breaks.length - 1].end_time = timestamp;
+        breaks[breaks.length - 1].end_odometer = odometer;
+      }
+      session.stop_time = timestamp;
+      session.stop_odometer = odometer;
+    }
+
+    setIsSavingMobileTracking(true);
+    try {
+      await persistMobileDraft(mobileDayDate, sessions);
+      setMobileTrackingAction(null);
+      setSuccessMessage(`${actionLabels[mobileTrackingAction]} at ${timestamp}.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSavingMobileTracking(false);
+    }
+  }
+
+  function draftSessionsForForm(draft) {
+    const workSessions = (draft?.sessions || []).filter((session) => session.stop_time);
+    return {
+      workSessions: workSessions.map((session) => {
+        const start = splitStoredTime(session.start_time);
+        const stop = splitStoredTime(session.stop_time);
+        return {
+          start_time_value: start.timeValue,
+          start_time_meridiem: start.meridiem,
+          stop_time_value: stop.timeValue,
+          stop_time_meridiem: stop.meridiem,
+          start_odometer: formNumber(session.start_odometer),
+          stop_odometer: formNumber(session.stop_odometer),
+        };
+      }),
+      breaks: workSessions.flatMap((session) =>
+        (session.breaks || []).filter((item) => item.end_time).map((item) => {
+          const start = splitStoredTime(item.start_time);
+          const end = splitStoredTime(item.end_time);
+          return {
+            start_time_value: start.timeValue,
+            start_time_meridiem: start.meridiem,
+            end_time_value: end.timeValue,
+            end_time_meridiem: end.meridiem,
+            start_odometer: formNumber(item.start_odometer),
+            end_odometer: formNumber(item.end_odometer),
+          };
+        })
+      ),
+    };
+  }
+
+  function finishMobileDraft() {
+    if (!activeMobileShift || isMobileSessionRunning) {
+      setError("End the active session before finishing the daily log.");
+      return;
+    }
+    const captured = draftSessionsForForm(activeMobileShift);
+    if (mobileDayRecord) {
+      handleEdit(mobileDayRecord);
+      setFormData((current) => ({
+        ...current,
+        work_sessions: [
+          ...(current.work_sessions.length === 1 &&
+          Object.values(current.work_sessions[0]).every((value) => value === "" || value === "PM")
+            ? []
+            : current.work_sessions),
+          ...captured.workSessions,
+        ],
+        breaks: [...current.breaks, ...captured.breaks],
+      }));
+    } else {
+      openAddFormForDate(mobileDayDate, false);
+      setFormData((current) => ({
+        ...current,
+        work_sessions: captured.workSessions.length
+          ? captured.workSessions
+          : [createEmptyWorkSession()],
+        breaks: captured.breaks,
+      }));
+    }
+    setShowAdvancedTracking(true);
+    setDraftBeingFinalizedDate(mobileDayDate);
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
 
@@ -2816,6 +3178,17 @@ function App() {
         setSuccessMessage("Daily record added.");
       }
 
+      if (draftBeingFinalizedDate) {
+        const draftResponse = await fetch(
+          `${API_BASE_URL}/api/drafts/${draftBeingFinalizedDate}`,
+          { method: "DELETE" }
+        );
+        if (!draftResponse.ok && draftResponse.status !== 404) {
+          throw new Error("The daily log saved, but its live draft could not be cleared.");
+        }
+        setDraftBeingFinalizedDate(null);
+      }
+
       await fetchDashboardData();
     } catch (err) {
       setError(err.message);
@@ -2825,7 +3198,11 @@ function App() {
   }
 
   async function handleDelete(date) {
-    const confirmed = window.confirm(`Delete record for ${date}?`);
+    const friendlyDate = new Date(`${date}T00:00:00`).toLocaleDateString(
+      "en-US",
+      { month: "short", day: "numeric", year: "numeric" }
+    );
+    const confirmed = window.confirm(`Delete ${friendlyDate}?`);
 
     if (!confirmed) {
       return;
@@ -3019,8 +3396,250 @@ function App() {
 
   return (
     <main className="app">
-      <section className="hero">
-        <p className="eyebrow">Uber Dashboard v3.14.0</p>
+      <div className="mobile-app-shell">
+        <header className="mobile-topbar">
+          <div>
+            <span className="mobile-brand">Uber Nest Tracker</span>
+            <h1>{mobileTab === "today" ? "Today" : mobileTab === "earnings" ? "Earnings" : "More"}</h1>
+          </div>
+          {mobileTab === "today" && mobileDayDate !== getTodayInputValue() && (
+            <button type="button" className="mobile-today-reset" onClick={() => selectRecordAndWeek(getTodayInputValue())}>Back to today</button>
+          )}
+        </header>
+
+        {(error || successMessage) && (
+          <div className="mobile-notification-area">
+            {error && <p className="error" role="alert">Error: {error}</p>}
+            {successMessage && <p className="success" role="status">{successMessage}</p>}
+          </div>
+        )}
+
+        {mobileTab === "today" && (
+          <section className={`mobile-tab-panel mobile-today-panel ${!mobileDayRecord && !activeMobileShift ? "mobile-today-idle" : ""}`}>
+            <div className="mobile-today-date">{formatMobileDate(mobileDayDate)}</div>
+
+            {mobileDayRecord && (
+              <article className="mobile-day-summary">
+                <span>Day total</span>
+                <strong><AnimatedNumber value={mobileDayRecord.total_earnings} format={(value) => `$${value.toFixed(2)}`} flash={false} /></strong>
+                <div>
+                  <span>{mobileDayRecord.trips} trips</span>
+                  <span>{formatHoursAndMinutes(mobileDayRecord.online_hours)} online</span>
+                  <span>{mobileDayRecord.real_work_hours !== null ? `${formatHoursAndMinutes(mobileDayRecord.real_work_hours)} real` : "Real time not tracked"}</span>
+                </div>
+              </article>
+            )}
+
+            {mobileDayDate === getTodayInputValue() && (
+              <article key={activeMobileShift?.status || "idle"} className={`mobile-live-tracker ${isMobileSessionRunning ? "active" : ""}`}>
+                <div className="mobile-section-heading">
+                  <div>
+                    <span className="mobile-section-eyebrow">Live tracking</span>
+                    <h2>{isMobileBreakRunning ? "Break in progress" : isMobileSessionRunning ? `Session ${activeMobileShift.sessions.length} in progress` : activeMobileShift ? "Ready to continue" : "Ready to work?"}</h2>
+                  </div>
+                  {isMobileSessionRunning && <span className="mobile-live-dot">Live</span>}
+                </div>
+
+                {activeMobileSession && isMobileSessionRunning && (
+                  <p className="mobile-live-detail">
+                    Started at {activeMobileSession.start_time}
+                    {isMobileBreakRunning ? ` · Break since ${activeMobileBreak.start_time}` : ""}
+                  </p>
+                )}
+
+                {activeMobileShift?.sessions?.length > 0 && (
+                  <div className="mobile-session-timeline">
+                    {activeMobileShift.sessions.map((session, index) => (
+                      <div key={`${session.start_time}-${index}`}>
+                        <span>Session {index + 1}</span>
+                        <strong>{session.start_time}–{session.stop_time || "Now"}</strong>
+                        {(session.start_odometer !== null || session.stop_odometer !== null) && <small>{session.start_odometer ?? "—"} → {session.stop_odometer ?? "—"} mi</small>}
+                        {(session.breaks || []).map((item, breakIndex) => <small key={`${item.start_time}-${breakIndex}`}>Break {item.start_time}–{item.end_time || "Now"}</small>)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <span className="mobile-tracker-hint">Every timestamp is saved immediately. You can close the app between actions.</span>
+              </article>
+            )}
+
+            {mobileDayRecord && <div className="mobile-day-management">
+              <button type="button" onClick={() => openQuickUpdate(mobileDayRecord)}>Quick update</button>
+              <button type="button" onClick={() => handleEdit(mobileDayRecord)}>Edit full day</button>
+            </div>}
+
+            {mobileFeaturedQuest && (
+              <article className="mobile-context-card">
+                <div><span>Active quest</span><strong>{mobileFeaturedQuest.title}</strong></div>
+                <strong>{Math.min(mobileFeaturedQuest.progress_trips, mobileFeaturedQuest.final_tier_trips)} / {mobileFeaturedQuest.final_tier_trips}</strong>
+                <div className="mobile-progress-track"><span style={{ width: `${Math.min((mobileFeaturedQuest.progress_trips / mobileFeaturedQuest.final_tier_trips) * 100, 100)}%` }}></span></div>
+              </article>
+            )}
+
+            {mobileDayRecord && (
+              <details className="mobile-detail-card mobile-day-details">
+                <summary>View day details</summary>
+                <div className="mobile-detail-grid">
+                  <div><span>Net fare</span><strong>${mobileDayRecord.net_fare.toFixed(2)}</strong></div>
+                  <div><span>Tips</span><strong>${(mobileDayRecord.tips + (mobileDayRecord.cash_tips || 0)).toFixed(2)}</strong></div>
+                  <div><span>Promotions</span><strong>${mobileDayRecord.promotions.toFixed(2)}</strong></div>
+                  <div><span>Work miles</span><strong>{mobileDayRecord.work_miles !== null ? mobileDayRecord.work_miles.toFixed(1) : "—"}</strong></div>
+                  <div><span>$/mile</span><strong>{mobileDayRecord.earnings_per_work_mile !== null ? `$${mobileDayRecord.earnings_per_work_mile.toFixed(2)}` : "—"}</strong></div>
+                  <div><span>Breaks</span><strong>{mobileDayRecord.break_hours ? formatHoursAndMinutes(mobileDayRecord.break_hours) : "None"}</strong></div>
+                </div>
+              </details>
+            )}
+
+            {mobileDayDate === getTodayInputValue() && <div className="mobile-today-action-dock">
+              <div>
+                {isMobileSessionRunning && !isMobileBreakRunning ? <>
+                  <button type="button" className="mobile-break-button" onClick={() => openMobileTrackingAction("start_break")}>Start break</button>
+                  <button type="button" className="mobile-end-button" onClick={() => openMobileTrackingAction("end_session")}>End session</button>
+                </> : isMobileBreakRunning ? <>
+                  <button type="button" className="mobile-start-button" onClick={() => openMobileTrackingAction("resume_session")}>Resume session</button>
+                  <button type="button" className="mobile-end-button" onClick={() => openMobileTrackingAction("end_session")}>End session</button>
+                </> : activeMobileShift ? <>
+                  <button type="button" className="mobile-start-button" onClick={() => openMobileTrackingAction("start_session")}>Start another session</button>
+                  <button type="button" className="primary-button" onClick={finishMobileDraft}>{mobileDayRecord ? "Add tracking to day" : "Finish daily log"}</button>
+                </> : <>
+                  <button type="button" className="mobile-start-button" onClick={() => openMobileTrackingAction("start_session")}>Start live session</button>
+                  {mobileDayRecord ? <button type="button" onClick={() => openQuickUpdate(mobileDayRecord)}>Quick update</button> : <button type="button" onClick={() => openAddFormForDate(mobileDayDate, false)}>Add day manually</button>}
+                </>}
+              </div>
+            </div>}
+          </section>
+        )}
+
+        {mobileTab === "earnings" && (
+          <section className="mobile-tab-panel mobile-earnings-panel">
+            <div className="mobile-week-nav">
+              <button type="button" onClick={() => changeWeek(-7)} aria-label="Previous week">←</button>
+              <button type="button" className="mobile-week-label" onClick={() => setIsWeekBrowserOpen(true)}>{weeklyChartData.length ? formatWeekRangeLabel(weeklyChartData[0].date, weeklyChartData[6].date) : "Choose week"}</button>
+              <button type="button" onClick={() => changeWeek(7)} aria-label="Next week">→</button>
+            </div>
+
+            <div className="mobile-earnings-headline">
+              <span>{isSelectedDayMode ? formatMobileDate(selectedRecordDate) : "Week total"}</span>
+              <strong><AnimatedNumber value={displayedTotalEarnings} format={(value) => `$${value.toFixed(2)}`} flash={false} /></strong>
+              {isSelectedDayMode && <button type="button" onClick={() => setSelectedRecordDate(null)}>All week</button>}
+            </div>
+
+            <div className={`mobile-earnings-chart detailed unified ${isSelectedDayMode ? "has-selection" : ""}`}>
+              {weeklyChartData.map((day, index) => {
+                const maxEarnings = Math.max(...weeklyChartData.map((item) => item.earnings), 1);
+                const selected = selectedRecordDate === day.date;
+                return (
+                  <button type="button" className={selected ? "selected" : ""} key={day.date} onClick={() => handleWeeklyBarClick(day)} aria-pressed={selected} style={{ "--bar-delay": `${index * 45}ms` }}>
+                    <span className="mobile-chart-value">{day.earnings > 0 ? `$${Math.round(day.earnings)}` : ""}</span>
+                    <span className={`mobile-chart-track ${day.earnings > 0 ? "has-value" : ""}`}><span style={{ height: `${day.earnings > 0 ? Math.max((day.earnings / maxEarnings) * 100, 8) : 0}%` }}></span></span>
+                    <strong>{day.shortDate}</strong><small>{day.dayLabel}</small>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mobile-earnings-stats mobile-selection-content">
+              <div><span>Online</span><strong>{formatHoursAndMinutes(displayedOnlineHours)}</strong></div>
+              <div><span>Real work</span><strong>{displayedRealWorkHours !== null ? formatHoursAndMinutes(displayedRealWorkHours) : "—"}</strong></div>
+              <div><span>Trips</span><strong><AnimatedNumber value={displayedTrips} format={(value) => String(Math.round(value))} flash={false} /></strong></div>
+              <div><span>Work miles</span><strong>{displayedWorkMiles !== null ? <AnimatedNumber value={displayedWorkMiles} format={(value) => value.toFixed(1)} flash={false} /> : "—"}</strong></div>
+              <div><span>Online $/hr</span><strong><AnimatedNumber value={displayedAverageHourly} format={(value) => `$${value.toFixed(2)}`} flash={false} /></strong></div>
+              <div><span>Real $/hr</span><strong>{displayedEarningsPerRealHour !== null ? <AnimatedNumber value={displayedEarningsPerRealHour} format={(value) => `$${value.toFixed(2)}`} flash={false} /> : "—"}</strong></div>
+            </div>
+
+            {weeklyRecapQuest && (
+              <article className="mobile-context-card mobile-week-quest">
+                <div><span>Quest</span><strong>{weeklyRecapQuest.title}</strong></div>
+                <strong>{weeklyRecapQuest.status}</strong>
+              </article>
+            )}
+
+            <div className="mobile-week-detail-sections mobile-selection-content" key={`details-${selectedRecordDate || selectedWeekStart}`}>
+                {isSelectedDayMode && selectedRecord && <section className="mobile-selected-day-intro">
+                  <header>
+                    <div><span>Selected day</span><h2>Day details</h2></div>
+                    <button type="button" onClick={() => handleEdit(selectedRecord)}>Edit day</button>
+                  </header>
+                  {selectedDayQuickRecap && <p><strong>Quick recap:</strong> {selectedDayQuickRecap}</p>}
+                </section>}
+                <section>
+                  <h2>Earnings breakdown</h2>
+                  <div><span>Net fare</span><strong>${displayedNetFare.toFixed(2)}</strong></div>
+                  <div><span>Tips</span><strong>${displayedTips.toFixed(2)}</strong></div>
+                  {isSelectedDayMode && displayedCashTips > 0 && <div><span>Cash tips included</span><strong>${displayedCashTips.toFixed(2)}</strong></div>}
+                  <div><span>Promotions</span><strong>${displayedPromotions.toFixed(2)}</strong></div>
+                  <div className="total"><span>Total earnings</span><strong>${displayedTotalEarnings.toFixed(2)}</strong></div>
+                </section>
+                {isSelectedDayMode && selectedRecord && <>
+                  <section>
+                    <h2>Time & mileage</h2>
+                    <div><span>Online time</span><strong>{formatHoursAndMinutes(selectedRecord.online_hours)}</strong></div>
+                    <div><span>Real work</span><strong>{selectedRecord.real_work_hours !== null ? formatHoursAndMinutes(selectedRecord.real_work_hours) : "Not tracked"}</strong></div>
+                    <div><span>Break time</span><strong>{selectedRecord.break_hours ? formatHoursAndMinutes(selectedRecord.break_hours) : "None"}</strong></div>
+                    <div><span>Work miles</span><strong>{selectedRecord.work_miles !== null ? selectedRecord.work_miles.toFixed(1) : "Not tracked"}</strong></div>
+                    <div><span>$/work mile</span><strong>{selectedRecord.earnings_per_work_mile !== null ? `$${selectedRecord.earnings_per_work_mile.toFixed(2)}` : "—"}</strong></div>
+                    <div><span>Miles/trip</span><strong>{selectedRecord.miles_per_trip !== null ? selectedRecord.miles_per_trip.toFixed(1) : "—"}</strong></div>
+                  </section>
+                  {(selectedRecord.work_sessions || []).length > 0 && <section>
+                    <h2>Sessions & breaks</h2>
+                    {selectedRecord.work_sessions.map((session, index) => <div key={`${session.start_time}-${index}`}><span>Session {index + 1}</span><strong>{session.start_time}–{session.stop_time}</strong></div>)}
+                    {(selectedRecord.breaks || []).map((item, index) => <div key={`${item.start_time}-${index}`}><span>Break {index + 1}</span><strong>{item.start_time}–{item.end_time}</strong></div>)}
+                  </section>}
+                  {((selectedRecord.day_tags || []).length > 0 || selectedRecord.notes) && <section>
+                    <h2>Context</h2>
+                    {(selectedRecord.day_tags || []).length > 0 && <div className="mobile-inline-effects">{selectedRecord.day_tags.map((tag) => <DayTagChip tagValue={tag} key={tag} />)}</div>}
+                    {selectedRecord.notes && <p className="mobile-inline-note">{selectedRecord.notes}</p>}
+                  </section>}
+                </>}
+                {!isSelectedDayMode && weeklyQuickRecap && <section><h2>Weekly recap</h2><p>{weeklyQuickRecap}</p></section>}
+                {!isSelectedDayMode && currentWeekData && <section className="mobile-week-notes-editor">
+                  <h2>Weekly notes</h2>
+                  {isEditingWeeklyNote ? <>
+                    <textarea value={weeklyNoteDraft} onChange={(event) => setWeeklyNoteDraft(event.target.value)} placeholder="How did this week feel?" rows="4" />
+                    <div className="mobile-sheet-actions">
+                      <button type="button" onClick={() => { setWeeklyNoteDraft(currentWeekData.notes || ""); setIsEditingWeeklyNote(false); }}>Cancel</button>
+                      <button type="button" className="primary-button" onClick={handleSaveWeeklyNote} disabled={isSavingWeeklyNote}>{isSavingWeeklyNote ? "Saving…" : "Save note"}</button>
+                    </div>
+                  </> : <>
+                    <p>{currentWeekData.notes || "No reflection saved for this week."}</p>
+                    <button type="button" onClick={() => setIsEditingWeeklyNote(true)}>{currentWeekData.notes ? "Edit note" : "Add note"}</button>
+                  </>}
+                </section>}
+            </div>
+
+            <article className="mobile-wallet-card">
+              <span>Wallet</span>
+              <h2>{summary?.current_wallet_balance !== null && summary?.current_wallet_balance !== undefined ? `$${summary.current_wallet_balance.toFixed(2)}` : "Not logged"}</h2>
+              <p>{summary?.current_wallet_as_of ? `Last recorded ${formatMobileDate(summary.current_wallet_as_of)}` : "Add a wallet balance to a daily log."}</p>
+              {walletFloor !== null && summary?.current_wallet_balance !== null && <small>${Math.max(summary.current_wallet_balance - walletFloor, 0).toFixed(2)} above wallet floor</small>}
+            </article>
+          </section>
+        )}
+
+        {mobileTab === "more" && (
+          <section className="mobile-tab-panel mobile-more-panel">
+            <h2>Tracking</h2>
+            <button type="button" className="mobile-more-row" onClick={() => openQuestManager()}><span><strong>Manage quests</strong><small>{mobileSortedQuests.length} saved</small></span><b>›</b></button>
+            <h2>Wallet</h2>
+            <article className="mobile-settings-card">
+              <div><strong>Wallet floor</strong><span>Reference amount kept in Uber</span></div>
+              {isEditingWalletFloor ? <div className="mobile-setting-editor"><input type="number" min="0" step="0.01" value={walletFloorInput} onChange={(event) => setWalletFloorInput(event.target.value)} /><button type="button" onClick={saveWalletFloor}>Save</button></div> : <button type="button" onClick={() => setIsEditingWalletFloor(true)}>{walletFloor !== null ? `$${walletFloor.toFixed(2)}` : "Set"}</button>}
+            </article>
+            <h2>Data</h2>
+            <article className="mobile-settings-card mobile-backup-card">
+              <div><strong>Backup data</strong><span>Import or export one complete CSV</span></div>
+              <div className="mobile-backup-actions"><button type="button" onClick={handleImportButtonClick} disabled={isImporting}>{isImporting ? "Reading…" : "Import"}</button><a href={`${API_BASE_URL}/api/daily/csv`}>Export</a></div>
+            </article>
+            <article className="mobile-settings-card mobile-danger-setting"><div><strong>Delete daily records</strong><span>Type-to-confirm protection is required</span></div><button type="button" className="delete-button" onClick={handleOpenDeleteAll}>Delete all</button></article>
+            <h2>Application</h2>
+            <div className="mobile-app-info"><strong>Uber Nest Tracker</strong><span>Version 4.0.0</span></div>
+          </section>
+        )}
+      </div>
+
+      <section className="hero desktop-primary">
+        <p className="eyebrow">Uber Dashboard v4.0.0</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -3028,7 +3647,7 @@ function App() {
       </section>
 
       {summary ? (
-        <section className="summary-grid">
+        <section className="summary-grid desktop-primary">
           <div className="card card-featured">
             <p>Wallet balance</p>
             {summary.current_wallet_balance !== null ? (
@@ -3115,11 +3734,11 @@ function App() {
           </div>
         </section>
       ) : (
-        <p>Loading summary...</p>
+        <p className="desktop-primary">Loading summary...</p>
       )}
 
       {weeklyChartData.length > 0 && (
-        <section className="chart-section">
+        <section className={`chart-section responsive-weekly-section ${mobileTab === "weekly" ? "mobile-weekly-visible" : ""}`}>
           <div className="weekly-chart-top">
             <div>
               <div className="week-nav-group">
@@ -3844,7 +4463,7 @@ function App() {
       )}
 
       {weeklyChartData.length === 0 && (
-        <section className="empty-card">
+        <section className={`empty-card responsive-weekly-section ${mobileTab === "weekly" ? "mobile-weekly-visible" : ""}`}>
           <p className="eyebrow">Weekly earnings</p>
           <h2>No weekly data yet</h2>
           <p>Add a daily log to build your first weekly earnings chart.</p>
@@ -3855,7 +4474,7 @@ function App() {
       )}
 
 
-      <section className="table-section">
+      <section className="table-section desktop-primary">
         <div className="table-section-header">
           <h2>Daily logs</h2>
 
@@ -4008,9 +4627,14 @@ function App() {
       <section className="form-section" ref={formSectionRef}>
         <div className="form-section-header">
           <h2>{editingDate ? `Edit daily log: ${editingDate}` : "Add daily log"}</h2>
+          <button type="button" className="mobile-form-close" onClick={cancelEdit} aria-label="Close form">×</button>
         </div>
 
         <form onSubmit={handleSubmit} className="entry-form">
+          <div className="mobile-form-section-title">
+            <strong>Basics</strong>
+            <span>Date, time online, and completed trips</span>
+          </div>
           <label>
             Date
             <input
@@ -4020,6 +4644,9 @@ function App() {
               onChange={handleInputChange}
               required
             />
+            {formData.date > getTodayInputValue() && (
+              <span className="future-date-warning">This date is in the future. Double-check it before saving.</span>
+            )}
           </label>
 
           <label>
@@ -4047,6 +4674,10 @@ function App() {
             />
           </label>
 
+          <div className="mobile-form-section-title">
+            <strong>Earnings</strong>
+            <span>Uber earnings and separate cash tips</span>
+          </div>
           <label>
             Net fare
             <input
@@ -4097,6 +4728,10 @@ function App() {
             />
           </label>
 
+          <div className="mobile-form-section-title">
+            <strong>Context</strong>
+            <span>Optional wallet snapshot, notes, and day effects</span>
+          </div>
           <label>
             Wallet balance optional
             <input
@@ -4821,6 +5456,112 @@ function App() {
           </div>
         )}
       </section>
+
+      <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
+        {[
+          ["today", "Today"],
+          ["earnings", "Earnings"],
+          ["more", "More"],
+        ].map(([tabValue, label]) => (
+          <button
+            type="button"
+            className={mobileTab === tabValue ? "active" : ""}
+            key={tabValue}
+            onClick={() => {
+              setMobileTab(tabValue);
+              if (tabValue === "today") {
+                const today = getTodayInputValue();
+                selectRecordAndWeek(today);
+              } else if (tabValue === "earnings") {
+                setSelectedRecordDate(null);
+              }
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          >
+            <span className={`mobile-nav-icon mobile-nav-icon-${tabValue}`} aria-hidden="true"></span>
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
+
+      {isQuickUpdateOpen && mobileDayRecord && (
+        <div className="mobile-sheet-overlay" onClick={() => !isSavingQuickUpdate && setIsQuickUpdateOpen(false)}>
+          <form className="mobile-quick-sheet" onSubmit={saveQuickUpdate} onClick={(event) => event.stopPropagation()}>
+            <div className="mobile-sheet-handle"></div>
+            <div className="mobile-sheet-heading">
+              <div>
+                <span>Quick update</span>
+                <h2>{formatMobileDate(mobileDayRecord.date)}</h2>
+              </div>
+              <button type="button" onClick={() => setIsQuickUpdateOpen(false)} aria-label="Close quick update">×</button>
+            </div>
+            <div className="mobile-quick-grid">
+              <label>
+                Trips
+                <input type="number" min="1" step="1" value={quickUpdateForm.trips} onChange={(event) => setQuickUpdateForm((current) => ({ ...current, trips: event.target.value }))} required />
+              </label>
+              <label>
+                Net fare
+                <input type="number" min="0" step="0.01" value={quickUpdateForm.net_fare} onChange={(event) => setQuickUpdateForm((current) => ({ ...current, net_fare: event.target.value }))} required />
+              </label>
+              <label>
+                App tips
+                <input type="number" min="0" step="0.01" value={quickUpdateForm.tips} onChange={(event) => setQuickUpdateForm((current) => ({ ...current, tips: event.target.value }))} required />
+              </label>
+              <label>
+                Promotions
+                <input type="number" min="0" step="0.01" value={quickUpdateForm.promotions} onChange={(event) => setQuickUpdateForm((current) => ({ ...current, promotions: event.target.value }))} />
+              </label>
+              <label className="mobile-quick-cash">
+                Cash tips
+                <input type="number" min="0" step="0.01" value={quickUpdateForm.cash_tips} onChange={(event) => setQuickUpdateForm((current) => ({ ...current, cash_tips: event.target.value }))} />
+              </label>
+            </div>
+            <div className="mobile-sheet-actions">
+              <button type="button" onClick={() => setIsQuickUpdateOpen(false)} disabled={isSavingQuickUpdate}>Cancel</button>
+              <button type="submit" className="primary-button" disabled={isSavingQuickUpdate}>{isSavingQuickUpdate ? "Saving…" : "Save update"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {mobileTrackingAction && (
+        <div className="mobile-sheet-overlay" onClick={() => !isSavingMobileTracking && setMobileTrackingAction(null)}>
+          <form className="mobile-quick-sheet mobile-tracking-sheet" onSubmit={handleMobileTrackingSubmit} onClick={(event) => event.stopPropagation()}>
+            <div className="mobile-sheet-handle"></div>
+            <div className="mobile-sheet-heading">
+              <div>
+                <span>Live tracking</span>
+                <h2>{{
+                  start_session: activeMobileShift ? "Start another session" : "Start live session",
+                  start_break: "Start break",
+                  resume_session: "Resume session",
+                  end_session: "End session",
+                }[mobileTrackingAction]}</h2>
+              </div>
+              <button type="button" onClick={() => setMobileTrackingAction(null)} aria-label="Close live tracking">×</button>
+            </div>
+            {mobileTrackingAction === "end_session" && isMobileBreakRunning && <p className="mobile-tracking-notice">The active break will end at the same time as this session.</p>}
+            <div className="mobile-tracking-fields">
+              <label>
+                Time
+                <div className="mobile-time-entry">
+                  <input type="text" inputMode="numeric" value={mobileTrackingForm.time_value} onChange={(event) => setMobileTrackingForm((current) => ({ ...current, time_value: event.target.value }))} placeholder="5:30" required />
+                  <select value={mobileTrackingForm.meridiem} onChange={(event) => setMobileTrackingForm((current) => ({ ...current, meridiem: event.target.value }))}><option>AM</option><option>PM</option></select>
+                </div>
+              </label>
+              <label>
+                Odometer <span>optional</span>
+                <input type="number" inputMode="decimal" min="0" step="0.1" value={mobileTrackingForm.odometer} onChange={(event) => setMobileTrackingForm((current) => ({ ...current, odometer: event.target.value }))} placeholder="Current mileage" />
+              </label>
+            </div>
+            <div className="mobile-sheet-actions">
+              <button type="button" onClick={() => setMobileTrackingAction(null)} disabled={isSavingMobileTracking}>Cancel</button>
+              <button type="submit" className="primary-button" disabled={isSavingMobileTracking}>{isSavingMobileTracking ? "Saving…" : "Confirm"}</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {isQuestManagerOpen && (
         <div className="quest-manager-overlay" onClick={closeQuestManager}>
