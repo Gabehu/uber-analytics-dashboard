@@ -1,9 +1,11 @@
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date as date_cls
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from database import (
     DailyDateConflictError,
     initialize_database,
@@ -73,8 +75,8 @@ app.add_middleware(
 )
 
 
-@app.get("/")
-def root():
+@app.get("/api/health")
+def health():
     return {"message": "Uber Dashboard API running"}
 
 
@@ -264,3 +266,23 @@ def delete_all_daily(payload: DeleteAllRequest):
         "message": "All daily records deleted.",
         "deleted_count": deleted_count,
     }
+
+
+# In phone/production mode, `npm run build` creates frontend/dist and FastAPI
+# serves that build from the same origin as /api.  API routes are registered
+# first, so this root mount cannot swallow them.  During normal Vite
+# development the directory may be absent; the API still runs independently.
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if FRONTEND_DIST.is_dir():
+    app.mount(
+        "/",
+        StaticFiles(directory=FRONTEND_DIST, html=True),
+        name="frontend",
+    )
+else:
+    @app.get("/")
+    def root():
+        return {
+            "message": "Uber Dashboard API running",
+            "frontend": "Run npm run build in frontend for single-origin mode.",
+        }

@@ -1,7 +1,12 @@
 import { Component, useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const API_BASE_URL = "http://127.0.0.1:8000";
+// Production is served by FastAPI from the same origin, including when the
+// desktop is reached privately through Tailscale.  Keeping this empty makes
+// every request use /api on the page's current host instead of accidentally
+// treating the phone itself (127.0.0.1) as the backend.  Developers can still
+// override it explicitly for an unusual split-host setup.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const DAILY_LOG_PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 const DAILY_LOG_SORT_OPTIONS = [
@@ -1099,6 +1104,7 @@ function App() {
   const [mobileDrafts, setMobileDrafts] = useState([]);
   const [mobileTrackingAction, setMobileTrackingAction] = useState(null);
   const [isSavingMobileTracking, setIsSavingMobileTracking] = useState(false);
+  const [deletingMobileSessionIndex, setDeletingMobileSessionIndex] = useState(null);
   const [mobileTrackingForm, setMobileTrackingForm] = useState({
     time_value: "",
     meridiem: "PM",
@@ -2642,6 +2648,61 @@ function App() {
     return savedDraft;
   }
 
+  async function handleDeleteMobileSession(sessionIndex) {
+    if (!activeMobileShift || deletingMobileSessionIndex !== null) return;
+
+    const session = activeMobileShift.sessions[sessionIndex];
+    if (!session) return;
+
+    const isActiveSession = !session.stop_time;
+    const sessionNumber = sessionIndex + 1;
+    const breakCount = (session.breaks || []).length;
+    const breakWarning = breakCount
+      ? ` and ${breakCount} attached break${breakCount === 1 ? "" : "s"}`
+      : "";
+    const action = isActiveSession ? "Discard" : "Delete";
+    const confirmed = window.confirm(
+      `${action} Session ${sessionNumber}?\n\n` +
+        `This will remove its recorded time, mileage${breakWarning}. ` +
+        "The daily earnings log will not be deleted."
+    );
+
+    if (!confirmed) return;
+
+    const remainingSessions = activeMobileShift.sessions.filter(
+      (_, index) => index !== sessionIndex
+    );
+
+    setDeletingMobileSessionIndex(sessionIndex);
+    setError("");
+    setSuccessMessage("");
+    try {
+      if (remainingSessions.length === 0) {
+        const response = await fetch(
+          `${API_BASE_URL}/api/drafts/${activeMobileShift.date}`,
+          { method: "DELETE" }
+        );
+        if (!response.ok && response.status !== 404) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || "Unable to remove this session.");
+        }
+        setMobileDrafts((current) =>
+          current.filter((draft) => draft.date !== activeMobileShift.date)
+        );
+      } else {
+        await persistMobileDraft(activeMobileShift.date, remainingSessions);
+      }
+
+      setSuccessMessage(
+        isActiveSession ? "Active session discarded." : "Session deleted."
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingMobileSessionIndex(null);
+    }
+  }
+
   async function handleMobileTrackingSubmit(event) {
     event.preventDefault();
     if (!mobileTrackingAction || isSavingMobileTracking) return;
@@ -3455,6 +3516,18 @@ function App() {
                         <strong>{session.start_time}–{session.stop_time || "Now"}</strong>
                         {(session.start_odometer !== null || session.stop_odometer !== null) && <small>{session.start_odometer ?? "—"} → {session.stop_odometer ?? "—"} mi</small>}
                         {(session.breaks || []).map((item, breakIndex) => <small key={`${item.start_time}-${breakIndex}`}>Break {item.start_time}–{item.end_time || "Now"}</small>)}
+                        <button
+                          type="button"
+                          className="mobile-session-delete"
+                          onClick={() => handleDeleteMobileSession(index)}
+                          disabled={deletingMobileSessionIndex !== null}
+                        >
+                          {deletingMobileSessionIndex === index
+                            ? "Removing…"
+                            : session.stop_time
+                              ? "Delete session"
+                              : "Discard session"}
+                        </button>
                       </div>
                     ))}
                   </div>

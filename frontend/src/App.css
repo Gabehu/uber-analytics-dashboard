@@ -4265,7 +4265,8 @@ th {
 
   .mobile-session-timeline > div {
     display: grid;
-    grid-template-columns: minmax(72px, auto) 1fr;
+    min-width: 0;
+    grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
     gap: 3px 10px;
     border-top: 1px solid var(--border);
     padding-top: 9px;
@@ -4286,6 +4287,25 @@ th {
   .mobile-session-timeline small {
     grid-column: 2;
     text-align: right;
+  }
+
+  .mobile-session-delete {
+    grid-column: 1 / -1;
+    justify-self: end;
+    max-width: 100%;
+    min-height: 32px;
+    margin-top: 5px;
+    border-color: rgba(224, 90, 90, 0.32);
+    padding: 5px 10px;
+    background: transparent;
+    color: var(--danger-text);
+    font-size: 11px;
+  }
+
+  .mobile-session-delete:hover:not(:disabled),
+  .mobile-session-delete:focus-visible {
+    border-color: rgba(224, 90, 90, 0.58);
+    background: var(--danger-bg);
   }
 
   .mobile-today-actions:empty {

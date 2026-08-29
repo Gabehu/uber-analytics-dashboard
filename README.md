@@ -100,6 +100,31 @@ npm run dev
 
 Runs at `http://localhost:5173`.
 
+## Private Android Access with Tailscale
+
+The tracker can remain on this Windows PC and be reached privately from an
+Android phone over cellular. SQLite remains the only database, and the PC must
+stay powered on, awake, online, and running the tracker during the shift.
+
+One-time setup after installing and signing into Tailscale on both devices:
+
+1. Double-click `setup-phone-access.bat` (use **Run as administrator** if
+   Windows denies access to the Tailscale service).
+2. Approve Tailscale HTTPS in the browser if prompted.
+3. Save the private `https://...ts.net` address printed by the script.
+
+Before each shift:
+
+1. Double-click `start-phone.bat`.
+2. Keep the **Uber Nest Tracker - Phone Server** window open and prevent the
+   PC from sleeping.
+3. Ensure Tailscale is connected on Android, then open the saved HTTPS address.
+
+`start-phone.bat` builds React and serves the resulting production files and
+all `/api` routes together through FastAPI on port 8000. The regular
+`start.bat` development workflow continues to use Vite on port 5173; Vite
+proxies its `/api` requests to the local FastAPI server.
+
 ## API
 
 ```
