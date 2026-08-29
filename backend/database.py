@@ -752,10 +752,21 @@ def initialize_database():
         CREATE TABLE IF NOT EXISTS daily_drafts (
             date TEXT PRIMARY KEY,
             sessions_json TEXT NOT NULL DEFAULT '[]',
+            home_end_time TEXT,
+            end_home_odometer REAL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
+
+    for column_definition in (
+        "home_end_time TEXT",
+        "end_home_odometer REAL",
+    ):
+        try:
+            cursor.execute(f"ALTER TABLE daily_drafts ADD COLUMN {column_definition}")
+        except sqlite3.OperationalError:
+            pass
 
     # v3.2: if the table already existed from before Day Effects shipped,
     # add the new column in place rather than requiring a fresh DB. Wrapped
@@ -1372,10 +1383,12 @@ def _draft_sessions_to_dicts(sessions):
     ]
 
 
-def _draft_status(sessions):
+def _draft_status(sessions, home_end_time=None):
     if not sessions:
         return "not_started"
     final_session = sessions[-1]
+    if home_end_time and final_session.get("stop_time"):
+        return "returned_home"
     if final_session.get("stop_time"):
         return "between_sessions"
     final_breaks = final_session.get("breaks") or []
@@ -1418,6 +1431,7 @@ def validate_daily_draft(draft):
             raise ValueError("Session odometers must stay in trip order.")
 
         previous_break_end = None
+        previous_break_end_odometer = None
         for break_index, break_item in enumerate(session["breaks"]):
             break_start = parse_12_hour_time_to_minutes(break_item["start_time"])
             break_end = parse_12_hour_time_to_minutes(break_item["end_time"])
@@ -1440,20 +1454,56 @@ def validate_daily_draft(draft):
                 raise ValueError("Break odometers cannot be negative.")
             if break_start_odo is not None and break_end_odo is not None and break_end_odo < break_start_odo:
                 raise ValueError("Break end odometer cannot be lower than its start.")
+            if start_odo is not None and break_start_odo is not None and break_start_odo < start_odo:
+                raise ValueError(f"Break {break_index + 1} odometer must start within its session.")
+            if previous_break_end_odometer is not None and break_start_odo is not None and break_start_odo < previous_break_end_odometer:
+                raise ValueError("Draft break odometers must stay in trip order.")
+            if stop_odo is not None and any(
+                value is not None and value > stop_odo
+                for value in (break_start_odo, break_end_odo)
+            ):
+                raise ValueError(f"Break {break_index + 1} odometer must end within its session.")
             if break_end is not None:
                 previous_break_end = break_end
+            if break_end_odo is not None:
+                previous_break_end_odometer = break_end_odo
 
         if stop is not None:
             previous_stop = stop
         if stop_odo is not None:
             previous_stop_odometer = stop_odo
+
+    home_end = parse_12_hour_time_to_minutes(draft.home_end_time)
+    if draft.home_end_time is not None and home_end is None:
+        raise ValueError("Final return home needs a valid time.")
+    if draft.end_home_odometer is not None and draft.end_home_odometer < 0:
+        raise ValueError("Final return home odometer cannot be negative.")
+    if draft.end_home_odometer is not None and draft.home_end_time is None:
+        raise ValueError("Final return home time is required when its odometer is recorded.")
+    if draft.home_end_time is not None:
+        if not sessions or sessions[-1]["stop_time"] is None:
+            raise ValueError("End the active session before recording the final return home.")
+        final_stop = parse_12_hour_time_to_minutes(sessions[-1]["stop_time"])
+        if home_end < final_stop:
+            raise ValueError("Final return home time cannot be earlier than the last session stop.")
+        final_stop_odometer = sessions[-1]["stop_odometer"]
+        if (
+            draft.end_home_odometer is not None
+            and final_stop_odometer is not None
+            and draft.end_home_odometer < final_stop_odometer
+        ):
+            raise ValueError("Final return home odometer cannot be lower than the last session stop.")
     return sessions
 
 
 def get_daily_drafts():
     conn = get_connection()
     rows = conn.execute(
-        "SELECT date, sessions_json, updated_at FROM daily_drafts ORDER BY date DESC"
+        """
+        SELECT date, sessions_json, home_end_time, end_home_odometer, updated_at
+        FROM daily_drafts
+        ORDER BY date DESC
+        """
     ).fetchall()
     conn.close()
     drafts = []
@@ -1462,7 +1512,9 @@ def get_daily_drafts():
         drafts.append({
             "date": row["date"],
             "sessions": sessions,
-            "status": _draft_status(sessions),
+            "home_end_time": row["home_end_time"],
+            "end_home_odometer": row["end_home_odometer"],
+            "status": _draft_status(sessions, row["home_end_time"]),
             "updated_at": row["updated_at"],
         })
     return drafts
@@ -1473,17 +1525,30 @@ def upsert_daily_draft(draft):
     conn = get_connection()
     conn.execute(
         """
-        INSERT INTO daily_drafts (date, sessions_json, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO daily_drafts (
+            date, sessions_json, home_end_time, end_home_odometer, updated_at
+        )
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(date) DO UPDATE SET
             sessions_json = excluded.sessions_json,
+            home_end_time = excluded.home_end_time,
+            end_home_odometer = excluded.end_home_odometer,
             updated_at = CURRENT_TIMESTAMP
         """,
-        (draft.date, json.dumps(sessions, separators=(",", ":"))),
+        (
+            draft.date,
+            json.dumps(sessions, separators=(",", ":")),
+            draft.home_end_time,
+            draft.end_home_odometer,
+        ),
     )
     conn.commit()
     row = conn.execute(
-        "SELECT date, sessions_json, updated_at FROM daily_drafts WHERE date = ?",
+        """
+        SELECT date, sessions_json, home_end_time, end_home_odometer, updated_at
+        FROM daily_drafts
+        WHERE date = ?
+        """,
         (draft.date,),
     ).fetchone()
     conn.close()
@@ -1491,7 +1556,9 @@ def upsert_daily_draft(draft):
     return {
         "date": row["date"],
         "sessions": stored_sessions,
-        "status": _draft_status(stored_sessions),
+        "home_end_time": row["home_end_time"],
+        "end_home_odometer": row["end_home_odometer"],
+        "status": _draft_status(stored_sessions, row["home_end_time"]),
         "updated_at": row["updated_at"],
     }
 

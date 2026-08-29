@@ -199,6 +199,90 @@ function DayTagChip({ tagValue, inTable = false }) {
   );
 }
 
+// Keep a notification mounted just long enough to animate away after its
+// parent clears the message. This gives desktop and mobile the same motion
+// without delaying the underlying success/error state or its auto-dismiss
+// timer.
+function AnimatedNotification({ message, type }) {
+  const [visibleMessage, setVisibleMessage] = useState(message);
+  const [isLeaving, setIsLeaving] = useState(false);
+  const exitTimerRef = useRef(null);
+
+  useEffect(() => {
+    window.clearTimeout(exitTimerRef.current);
+
+    if (message) {
+      setVisibleMessage(message);
+      setIsLeaving(false);
+      return undefined;
+    }
+
+    if (visibleMessage) {
+      setIsLeaving(true);
+      exitTimerRef.current = window.setTimeout(() => {
+        setVisibleMessage("");
+        setIsLeaving(false);
+      }, 200);
+    }
+
+    return () => window.clearTimeout(exitTimerRef.current);
+  }, [message, visibleMessage]);
+
+  if (!visibleMessage) return null;
+
+  return (
+    <p
+      key={visibleMessage}
+      className={`${type} app-notification ${isLeaving ? "app-notification-leaving" : ""}`}
+      role={type === "error" ? "alert" : "status"}
+    >
+      {type === "error" ? `Error: ${visibleMessage}` : visibleMessage}
+    </p>
+  );
+}
+
+function QuestTierProgress({ quest, className = "" }) {
+  const finalTarget = Math.max(Number(quest.final_tier_trips) || 0, 1);
+  const firstTarget = Math.min(
+    Math.max(Number(quest.first_tier_trips) || 0, 0),
+    finalTarget
+  );
+  const progress = Math.min(
+    Math.max(Number(quest.progress_trips) || 0, 0),
+    finalTarget
+  );
+  const firstTierPosition = (firstTarget / finalTarget) * 100;
+  const firstTierFill = (Math.min(progress, firstTarget) / finalTarget) * 100;
+  const finalTierFill =
+    (Math.max(progress - firstTarget, 0) / finalTarget) * 100;
+
+  return (
+    <span
+      className={`quest-progress-track quest-tier-progress ${progress >= firstTarget ? "first-tier-reached" : ""} ${progress >= finalTarget ? "final-tier-reached" : ""} ${className}`.trim()}
+      role="progressbar"
+      aria-label={`${progress} of ${finalTarget} quest trips; first tier at ${firstTarget} trips`}
+      aria-valuemin="0"
+      aria-valuemax={finalTarget}
+      aria-valuenow={progress}
+      title={`First tier at ${firstTarget} trips · Final tier at ${finalTarget} trips`}
+    >
+      <span
+        className="quest-tier-fill quest-tier-fill-first"
+        style={{ width: `${firstTierFill}%` }}
+      ></span>
+      <span
+        className="quest-tier-fill quest-tier-fill-final"
+        style={{ left: `${firstTierPosition}%`, width: `${finalTierFill}%` }}
+      ></span>
+      <span
+        className="quest-tier-marker"
+        style={{ left: `${firstTierPosition}%` }}
+        aria-hidden="true"
+      ></span>
+    </span>
+  );
+}
+
 // The "+N" overflow pill in the table's Effects column. Same styled-tooltip
 // pattern as DayTagChip/LabelChip, but lists every hidden tag (each with its
 // own category icon) instead of a single sentence, since there can be
@@ -1057,6 +1141,8 @@ function App() {
   const [showDayEffects, setShowDayEffects] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingDate, setEditingDate] = useState(null);
+  const [isDailyLogFormClosing, setIsDailyLogFormClosing] = useState(false);
+  const dailyLogFormCloseTimerRef = useRef(null);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1105,6 +1191,25 @@ function App() {
   const [mobileTrackingAction, setMobileTrackingAction] = useState(null);
   const [isSavingMobileTracking, setIsSavingMobileTracking] = useState(false);
   const [deletingMobileSessionIndex, setDeletingMobileSessionIndex] = useState(null);
+  const [mobileDraftEditTarget, setMobileDraftEditTarget] = useState(null);
+  const [mobileDraftEditError, setMobileDraftEditError] = useState("");
+  const [isSavingMobileDraftEdit, setIsSavingMobileDraftEdit] = useState(false);
+  const [mobileDraftEditForm, setMobileDraftEditForm] = useState({
+    start_time_value: "",
+    start_time_meridiem: "PM",
+    start_odometer: "",
+    end_time_value: "",
+    end_time_meridiem: "PM",
+    end_odometer: "",
+  });
+  const [mobileNow, setMobileNow] = useState(() => Date.now());
+  const [closingMobileSheet, setClosingMobileSheet] = useState(null);
+  const mobileSheetCloseTimerRef = useRef(null);
+  const [isServerReachable, setIsServerReachable] = useState(true);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isStandaloneApp, setIsStandaloneApp] = useState(() =>
+    window.matchMedia?.("(display-mode: standalone)").matches || false
+  );
   const [mobileTrackingForm, setMobileTrackingForm] = useState({
     time_value: "",
     meridiem: "PM",
@@ -1625,6 +1730,21 @@ function App() {
   const isMobileBreakRunning = Boolean(
     isMobileSessionRunning && activeMobileBreak && !activeMobileBreak.end_time
   );
+  const mobileLiveStartedAt = isMobileBreakRunning
+    ? activeMobileBreak?.start_time
+    : activeMobileSession?.start_time;
+  const mobileLiveElapsedLabel = (() => {
+    if (!mobileLiveStartedAt) return null;
+    const parts = splitStoredTime(mobileLiveStartedAt);
+    const startMinutes = timeToMinutes(parts.timeValue, parts.meridiem);
+    if (startMinutes === null) return null;
+    const now = new Date(mobileNow);
+    let elapsedMinutes = now.getHours() * 60 + now.getMinutes() - startMinutes;
+    if (elapsedMinutes < 0) elapsedMinutes += 24 * 60;
+    const hours = Math.floor(elapsedMinutes / 60);
+    const minutes = elapsedMinutes % 60;
+    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  })();
 
   const displayedTotalEarnings = selectedRecordIsInVisibleWeek
     ? selectedRecord.total_earnings
@@ -1794,6 +1914,16 @@ function App() {
     return [
       record.hourly_label,
       getVisiblePromoLabel(record),
+      record.mileage_label,
+    ].filter(Boolean);
+  }
+
+  function getMobilePerformanceLabels(record) {
+    if (!record) return [];
+    return [
+      record.hourly_label,
+      getVisiblePromoLabel(record),
+      record.tip_label,
       record.mileage_label,
     ].filter(Boolean);
   }
@@ -2072,9 +2202,18 @@ function App() {
       setWeeks(weeksData);
       setQuests(questsData);
       setMobileDrafts(draftsData);
+      setIsServerReachable(true);
     } catch (err) {
+      setIsServerReachable(false);
       setError(err.message);
     }
+  }
+
+  async function installMobileApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
   }
 
   async function fetchWalletFloor() {
@@ -2298,6 +2437,41 @@ function App() {
     return () => clearTimeout(timerId);
   }, [successMessage, importResult]);
 
+  useEffect(
+    () => () => {
+      window.clearTimeout(mobileSheetCloseTimerRef.current);
+      window.clearTimeout(dailyLogFormCloseTimerRef.current);
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!isMobileSessionRunning) return undefined;
+    setMobileNow(Date.now());
+    const timerId = window.setInterval(() => setMobileNow(Date.now()), 30_000);
+    return () => window.clearInterval(timerId);
+  }, [isMobileSessionRunning, isMobileBreakRunning]);
+
+  useEffect(() => {
+    function handleInstallPrompt(event) {
+      event.preventDefault();
+      setInstallPrompt(event);
+    }
+
+    function handleInstalled() {
+      setInstallPrompt(null);
+      setIsStandaloneApp(true);
+      setSuccessMessage("Uber Nest Tracker installed.");
+    }
+
+    window.addEventListener("beforeinstallprompt", handleInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
+  }, []);
+
   // Deliberately depends on editingDate ONLY, not isFormOpen. Editing a
   // record scrolls the form into view since it can be anywhere in a long
   // table; adding a new one does NOT scroll, since the Add button already
@@ -2348,6 +2522,8 @@ function App() {
   }
 
   function openAddFormForDate(dateString = getTodayInputValue(), shouldScroll = true) {
+    window.clearTimeout(dailyLogFormCloseTimerRef.current);
+    setIsDailyLogFormClosing(false);
     setEditingDate(null);
     setIsFormOpen(true);
     setFormData(createEmptyForm(dateString));
@@ -2430,6 +2606,8 @@ function App() {
   }
 
   function handleEdit(record) {
+    window.clearTimeout(dailyLogFormCloseTimerRef.current);
+    setIsDailyLogFormClosing(false);
     const homeEndTime = splitStoredTime(record.home_end_time);
 
     setEditingDate(record.date);
@@ -2499,14 +2677,32 @@ function App() {
     setSuccessMessage("");
   }
 
-  function cancelEdit() {
+  function finishClosingDailyLogForm(clearMessages = true) {
     setEditingDate(null);
     setIsFormOpen(false);
+    setIsDailyLogFormClosing(false);
     setFormData(createEmptyForm());
     setShowAdvancedTracking(false);
     setShowDayEffects(false);
-    setError("");
-    setSuccessMessage("");
+    if (clearMessages) {
+      setError("");
+      setSuccessMessage("");
+    }
+  }
+
+  function closeDailyLogForm({ clearMessages = true, allowWhileSubmitting = false } = {}) {
+    if (isDailyLogFormClosing || (isSubmitting && !allowWhileSubmitting)) return;
+
+    window.clearTimeout(dailyLogFormCloseTimerRef.current);
+    setIsDailyLogFormClosing(true);
+    dailyLogFormCloseTimerRef.current = window.setTimeout(
+      () => finishClosingDailyLogForm(clearMessages),
+      240
+    );
+  }
+
+  function cancelEdit() {
+    closeDailyLogForm();
   }
 
   function dailyRecordToPayload(record, overrides = {}) {
@@ -2551,6 +2747,32 @@ function App() {
       notes: record.notes,
       day_tags: record.day_tags,
     };
+  }
+
+  function closeMobileSheet(sheetName, finishClosing) {
+    if (closingMobileSheet) return;
+
+    window.clearTimeout(mobileSheetCloseTimerRef.current);
+    setClosingMobileSheet(sheetName);
+    mobileSheetCloseTimerRef.current = window.setTimeout(() => {
+      finishClosing();
+      setClosingMobileSheet(null);
+    }, 220);
+  }
+
+  function closeQuickUpdateSheet() {
+    if (isSavingQuickUpdate) return;
+    closeMobileSheet("quick-update", () => setIsQuickUpdateOpen(false));
+  }
+
+  function closeMobileTrackingSheet() {
+    if (isSavingMobileTracking) return;
+    closeMobileSheet("tracking", () => setMobileTrackingAction(null));
+  }
+
+  function closeMobileDraftEditSheet() {
+    if (isSavingMobileDraftEdit) return;
+    closeMobileSheet("draft-edit", () => setMobileDraftEditTarget(null));
   }
 
   function openQuickUpdate(record) {
@@ -2608,7 +2830,7 @@ function App() {
         const errorData = await response.json();
         throw new Error(errorData.detail || "Unable to update this day.");
       }
-      setIsQuickUpdateOpen(false);
+      closeMobileSheet("quick-update", () => setIsQuickUpdateOpen(false));
       setSuccessMessage("Quick update saved.");
       await fetchDashboardData();
     } catch (err) {
@@ -2619,22 +2841,54 @@ function App() {
   }
 
   function openMobileTrackingAction(action) {
+    if (
+      action === "start_session" &&
+      activeMobileShift?.home_end_time &&
+      !window.confirm(
+        "Starting another session will clear the recorded final return home. Continue?"
+      )
+    ) {
+      return;
+    }
+
     const currentTime = getCurrentTimeParts();
-    const parts = splitStoredTime(currentTime.stored);
+    const storedTime =
+      action === "edit_home" && activeMobileShift?.home_end_time
+        ? activeMobileShift.home_end_time
+        : currentTime.stored;
+    const parts = splitStoredTime(storedTime);
     setMobileTrackingForm({
       time_value: parts.timeValue,
       meridiem: parts.meridiem,
-      odometer: "",
+      odometer:
+        action === "edit_home"
+          ? formNumber(activeMobileShift?.end_home_odometer)
+          : "",
     });
     setError("");
     setMobileTrackingAction(action);
   }
 
-  async function persistMobileDraft(date, sessions) {
+  async function persistMobileDraft(date, sessions, overrides = {}) {
+    const existingDraft = mobileDrafts.find((draft) => draft.date === date);
+    const homeEndTime = Object.prototype.hasOwnProperty.call(overrides, "home_end_time")
+      ? overrides.home_end_time
+      : existingDraft?.home_end_time ?? null;
+    const endHomeOdometer = Object.prototype.hasOwnProperty.call(
+      overrides,
+      "end_home_odometer"
+    )
+      ? overrides.end_home_odometer
+      : existingDraft?.end_home_odometer ?? null;
     const response = await fetch(`${API_BASE_URL}/api/drafts/${date}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date, sessions }),
+      body: JSON.stringify({
+        date,
+        sessions,
+        home_end_time: homeEndTime,
+        end_home_odometer: endHomeOdometer,
+      }),
     });
     if (!response.ok) {
       const errorData = await response.json();
@@ -2703,6 +2957,110 @@ function App() {
     }
   }
 
+  function openMobileDraftEditor(kind, sessionIndex, breakIndex = null) {
+    const session = activeMobileShift?.sessions?.[sessionIndex];
+    const item =
+      kind === "break" ? session?.breaks?.[breakIndex] : session;
+    if (!item) return;
+
+    const start = splitStoredTime(item.start_time);
+    const end = splitStoredTime(
+      kind === "break" ? item.end_time : item.stop_time
+    );
+    setMobileDraftEditTarget({ kind, sessionIndex, breakIndex });
+    setMobileDraftEditForm({
+      start_time_value: start.timeValue,
+      start_time_meridiem: start.meridiem,
+      start_odometer: formNumber(item.start_odometer),
+      end_time_value: end.timeValue,
+      end_time_meridiem: end.meridiem,
+      end_odometer: formNumber(
+        kind === "break" ? item.end_odometer : item.stop_odometer
+      ),
+    });
+    setMobileDraftEditError("");
+    setError("");
+  }
+
+  async function saveMobileDraftEdit(event) {
+    event.preventDefault();
+    if (!mobileDraftEditTarget || !activeMobileShift || isSavingMobileDraftEdit) {
+      return;
+    }
+
+    if (!isValidTimeValue(mobileDraftEditForm.start_time_value)) {
+      setMobileDraftEditError("Start time must look like 5, 5:30, or 12:05.");
+      return;
+    }
+
+    const sessions = structuredClone(activeMobileShift.sessions);
+    const session = sessions[mobileDraftEditTarget.sessionIndex];
+    const item =
+      mobileDraftEditTarget.kind === "break"
+        ? session?.breaks?.[mobileDraftEditTarget.breakIndex]
+        : session;
+    if (!item) {
+      setMobileDraftEditError("That tracking entry is no longer available.");
+      return;
+    }
+
+    const originalEndTime =
+      mobileDraftEditTarget.kind === "break" ? item.end_time : item.stop_time;
+    if (
+      originalEndTime &&
+      !isValidTimeValue(mobileDraftEditForm.end_time_value)
+    ) {
+      setMobileDraftEditError("End time must look like 5, 5:30, or 12:05.");
+      return;
+    }
+
+    const startOdometer = optionalNumber(mobileDraftEditForm.start_odometer);
+    const endOdometer = optionalNumber(mobileDraftEditForm.end_odometer);
+    if (
+      [startOdometer, endOdometer].some(
+        (value) => value !== null && (!Number.isFinite(value) || value < 0)
+      )
+    ) {
+      setMobileDraftEditError("Odometers must be valid non-negative numbers.");
+      return;
+    }
+
+    item.start_time = combineTimeInput(
+      mobileDraftEditForm.start_time_value,
+      mobileDraftEditForm.start_time_meridiem
+    );
+    item.start_odometer = startOdometer;
+    if (originalEndTime) {
+      const updatedEndTime = combineTimeInput(
+        mobileDraftEditForm.end_time_value,
+        mobileDraftEditForm.end_time_meridiem
+      );
+      if (mobileDraftEditTarget.kind === "break") {
+        item.end_time = updatedEndTime;
+        item.end_odometer = endOdometer;
+      } else {
+        item.stop_time = updatedEndTime;
+        item.stop_odometer = endOdometer;
+      }
+    }
+
+    setIsSavingMobileDraftEdit(true);
+    setMobileDraftEditError("");
+    try {
+      await persistMobileDraft(activeMobileShift.date, sessions);
+      closeMobileSheet("draft-edit", () => setMobileDraftEditTarget(null));
+      setSuccessMessage(
+        mobileDraftEditTarget.kind === "break"
+          ? "Break details updated."
+          : "Session details updated."
+      );
+    } catch (err) {
+      setMobileDraftEditError(err.message);
+    } finally {
+      setIsSavingMobileDraftEdit(false);
+    }
+  }
+
   async function handleMobileTrackingSubmit(event) {
     event.preventDefault();
     if (!mobileTrackingAction || isSavingMobileTracking) return;
@@ -2727,7 +3085,10 @@ function App() {
       start_break: "Break started",
       resume_session: "Break ended",
       end_session: "Session ended",
+      record_home: "Final return home recorded",
+      edit_home: "Final return home updated",
     };
+    let draftOverrides = {};
 
     if (mobileTrackingAction === "start_session") {
       if (isMobileSessionRunning) {
@@ -2741,6 +3102,7 @@ function App() {
         stop_odometer: null,
         breaks: [],
       });
+      draftOverrides = { home_end_time: null, end_home_odometer: null };
     } else if (mobileTrackingAction === "start_break") {
       if (!isMobileSessionRunning || isMobileBreakRunning) return;
       sessions[sessions.length - 1].breaks.push({
@@ -2764,12 +3126,24 @@ function App() {
       }
       session.stop_time = timestamp;
       session.stop_odometer = odometer;
+    } else if (
+      mobileTrackingAction === "record_home" ||
+      mobileTrackingAction === "edit_home"
+    ) {
+      if (!activeMobileShift || isMobileSessionRunning) {
+        setError("End the active session before recording the final return home.");
+        return;
+      }
+      draftOverrides = {
+        home_end_time: timestamp,
+        end_home_odometer: odometer,
+      };
     }
 
     setIsSavingMobileTracking(true);
     try {
-      await persistMobileDraft(mobileDayDate, sessions);
-      setMobileTrackingAction(null);
+      await persistMobileDraft(mobileDayDate, sessions, draftOverrides);
+      closeMobileSheet("tracking", () => setMobileTrackingAction(null));
       setSuccessMessage(`${actionLabels[mobileTrackingAction]} at ${timestamp}.`);
     } catch (err) {
       setError(err.message);
@@ -2780,6 +3154,7 @@ function App() {
 
   function draftSessionsForForm(draft) {
     const workSessions = (draft?.sessions || []).filter((session) => session.stop_time);
+    const homeEnd = splitStoredTime(draft?.home_end_time || "");
     return {
       workSessions: workSessions.map((session) => {
         const start = splitStoredTime(session.start_time);
@@ -2807,6 +3182,9 @@ function App() {
           };
         })
       ),
+      homeEndTimeValue: homeEnd.timeValue,
+      homeEndTimeMeridiem: homeEnd.meridiem,
+      endHomeOdometer: formNumber(draft?.end_home_odometer),
     };
   }
 
@@ -2828,6 +3206,15 @@ function App() {
           ...captured.workSessions,
         ],
         breaks: [...current.breaks, ...captured.breaks],
+        home_end_time_value:
+          captured.homeEndTimeValue || current.home_end_time_value,
+        home_end_time_meridiem: captured.homeEndTimeValue
+          ? captured.homeEndTimeMeridiem
+          : current.home_end_time_meridiem,
+        end_home_odometer:
+          captured.endHomeOdometer !== ""
+            ? captured.endHomeOdometer
+            : current.end_home_odometer,
       }));
     } else {
       openAddFormForDate(mobileDayDate, false);
@@ -2837,6 +3224,9 @@ function App() {
           ? captured.workSessions
           : [createEmptyWorkSession()],
         breaks: captured.breaks,
+        home_end_time_value: captured.homeEndTimeValue,
+        home_end_time_meridiem: captured.homeEndTimeMeridiem,
+        end_home_odometer: captured.endHomeOdometer,
       }));
     }
     setShowAdvancedTracking(true);
@@ -3218,10 +3608,6 @@ function App() {
 
       const savedRecord = await response.json();
 
-      setFormData(createEmptyForm());
-      setShowAdvancedTracking(false);
-      setShowDayEffects(false);
-      setIsFormOpen(false);
       setSelectedRecordDate(savedRecord.date);
 
       const savedRecordWeekStart = getWeekStart(savedRecord.date);
@@ -3229,7 +3615,6 @@ function App() {
 
       if (editingDate) {
         const originalDate = editingDate;
-        setEditingDate(null);
         setSuccessMessage(
           savedRecord.date !== originalDate
             ? `Daily record moved to ${formatRecordDate(savedRecord.date)} and updated.`
@@ -3238,6 +3623,8 @@ function App() {
       } else {
         setSuccessMessage("Daily record added.");
       }
+
+      closeDailyLogForm({ clearMessages: false, allowWhileSubmitting: true });
 
       if (draftBeingFinalizedDate) {
         const draftResponse = await fetch(
@@ -3468,10 +3855,18 @@ function App() {
           )}
         </header>
 
-        {(error || successMessage) && (
-          <div className="mobile-notification-area">
-            {error && <p className="error" role="alert">Error: {error}</p>}
-            {successMessage && <p className="success" role="status">{successMessage}</p>}
+        <div className="mobile-notification-area">
+          <AnimatedNotification message={error} type="error" />
+          <AnimatedNotification message={successMessage} type="success" />
+        </div>
+
+        {!isServerReachable && (
+          <div className="mobile-connection-banner" role="status">
+            <div>
+              <strong>Home server unavailable</strong>
+              <span>Tracking changes need Tailscale and the PC server connected.</span>
+            </div>
+            <button type="button" onClick={fetchDashboardData}>Retry</button>
           </div>
         )}
 
@@ -3491,14 +3886,27 @@ function App() {
               </article>
             )}
 
+            {mobileDayRecord && (
+              <div className="mobile-performance-chips" aria-label="Daily performance indicators">
+                {getMobilePerformanceLabels(mobileDayRecord).map((label) => (
+                  <LabelChip key={label} label={label} record={mobileDayRecord} />
+                ))}
+              </div>
+            )}
+
             {mobileDayDate === getTodayInputValue() && (
-              <article key={activeMobileShift?.status || "idle"} className={`mobile-live-tracker ${isMobileSessionRunning ? "active" : ""}`}>
+              <article key={activeMobileShift?.status || "idle"} className={`mobile-live-tracker ${isMobileSessionRunning ? "active" : ""} ${isMobileBreakRunning ? "on-break" : ""}`}>
                 <div className="mobile-section-heading">
                   <div>
                     <span className="mobile-section-eyebrow">Live tracking</span>
-                    <h2>{isMobileBreakRunning ? "Break in progress" : isMobileSessionRunning ? `Session ${activeMobileShift.sessions.length} in progress` : activeMobileShift ? "Ready to continue" : "Ready to work?"}</h2>
+                    <h2>{isMobileBreakRunning ? "Break in progress" : isMobileSessionRunning ? `Session ${activeMobileShift.sessions.length} in progress` : activeMobileShift?.home_end_time ? "Return home recorded" : activeMobileShift ? "Ready to continue" : "Ready to work?"}</h2>
                   </div>
-                  {isMobileSessionRunning && <span className="mobile-live-dot">Live</span>}
+                  {isMobileSessionRunning && (
+                    <span className={`mobile-live-dot ${isMobileBreakRunning ? "break" : ""}`}>
+                      {isMobileBreakRunning ? "Break" : "Live"}
+                      {mobileLiveElapsedLabel ? ` · ${mobileLiveElapsedLabel}` : ""}
+                    </span>
+                  )}
                 </div>
 
                 {activeMobileSession && isMobileSessionRunning && (
@@ -3515,21 +3923,51 @@ function App() {
                         <span>Session {index + 1}</span>
                         <strong>{session.start_time}–{session.stop_time || "Now"}</strong>
                         {(session.start_odometer !== null || session.stop_odometer !== null) && <small>{session.start_odometer ?? "—"} → {session.stop_odometer ?? "—"} mi</small>}
-                        {(session.breaks || []).map((item, breakIndex) => <small key={`${item.start_time}-${breakIndex}`}>Break {item.start_time}–{item.end_time || "Now"}</small>)}
-                        <button
-                          type="button"
-                          className="mobile-session-delete"
-                          onClick={() => handleDeleteMobileSession(index)}
-                          disabled={deletingMobileSessionIndex !== null}
-                        >
-                          {deletingMobileSessionIndex === index
-                            ? "Removing…"
-                            : session.stop_time
-                              ? "Delete session"
-                              : "Discard session"}
-                        </button>
+                        {(session.breaks || []).map((item, breakIndex) => (
+                          <div className="mobile-break-timeline-row" key={`${item.start_time}-${breakIndex}`}>
+                            <small>Break {item.start_time}–{item.end_time || "Now"}</small>
+                            <button type="button" onClick={() => openMobileDraftEditor("break", index, breakIndex)}>Edit</button>
+                          </div>
+                        ))}
+                        <div className="mobile-session-row-actions">
+                          <button
+                            type="button"
+                            className="mobile-session-edit"
+                            onClick={() => openMobileDraftEditor("session", index)}
+                          >
+                            Edit session
+                          </button>
+                          <button
+                            type="button"
+                            className="mobile-session-delete"
+                            onClick={() => handleDeleteMobileSession(index)}
+                            disabled={deletingMobileSessionIndex !== null}
+                          >
+                            {deletingMobileSessionIndex === index
+                              ? "Removing…"
+                              : session.stop_time
+                                ? "Delete session"
+                                : "Discard session"}
+                          </button>
+                        </div>
                       </div>
                     ))}
+                    {activeMobileShift.home_end_time && (
+                      <div className="mobile-return-home-row">
+                        <span>Final return home</span>
+                        <strong>{activeMobileShift.home_end_time}</strong>
+                        {activeMobileShift.end_home_odometer !== null && (
+                          <small>{activeMobileShift.end_home_odometer} mi</small>
+                        )}
+                        <button
+                          type="button"
+                          className="mobile-session-edit"
+                          onClick={() => openMobileTrackingAction("edit_home")}
+                        >
+                          Edit return home
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3546,7 +3984,7 @@ function App() {
               <article className="mobile-context-card">
                 <div><span>Active quest</span><strong>{mobileFeaturedQuest.title}</strong></div>
                 <strong>{Math.min(mobileFeaturedQuest.progress_trips, mobileFeaturedQuest.final_tier_trips)} / {mobileFeaturedQuest.final_tier_trips}</strong>
-                <div className="mobile-progress-track"><span style={{ width: `${Math.min((mobileFeaturedQuest.progress_trips / mobileFeaturedQuest.final_tier_trips) * 100, 100)}%` }}></span></div>
+                <QuestTierProgress quest={mobileFeaturedQuest} className="mobile-progress-track" />
               </article>
             )}
 
@@ -3574,7 +4012,8 @@ function App() {
                   <button type="button" className="mobile-end-button" onClick={() => openMobileTrackingAction("end_session")}>End session</button>
                 </> : activeMobileShift ? <>
                   <button type="button" className="mobile-start-button" onClick={() => openMobileTrackingAction("start_session")}>Start another session</button>
-                  <button type="button" className="primary-button" onClick={finishMobileDraft}>{mobileDayRecord ? "Add tracking to day" : "Finish daily log"}</button>
+                  <button type="button" className="mobile-home-button" onClick={() => openMobileTrackingAction(activeMobileShift.home_end_time ? "edit_home" : "record_home")}>{activeMobileShift.home_end_time ? "Edit return home" : "Record return home"}</button>
+                  <button type="button" className="primary-button mobile-finalize-button" onClick={finishMobileDraft}>{mobileDayRecord ? "Add tracking to day" : "Finish daily log"}</button>
                 </> : <>
                   <button type="button" className="mobile-start-button" onClick={() => openMobileTrackingAction("start_session")}>Start live session</button>
                   {mobileDayRecord ? <button type="button" onClick={() => openQuickUpdate(mobileDayRecord)}>Quick update</button> : <button type="button" onClick={() => openAddFormForDate(mobileDayDate, false)}>Add day manually</button>}
@@ -3621,6 +4060,36 @@ function App() {
               <div><span>Real $/hr</span><strong>{displayedEarningsPerRealHour !== null ? <AnimatedNumber value={displayedEarningsPerRealHour} format={(value) => `$${value.toFixed(2)}`} flash={false} /> : "—"}</strong></div>
             </div>
 
+
+            {isSelectedDayMode && selectedRecord && (
+              <section
+                className="mobile-selected-day-snapshot mobile-selection-content"
+                key={`snapshot-${selectedRecord.date}`}
+              >
+                <header>
+                  <div><span>Selected day</span><h2>Day details</h2></div>
+                  <button type="button" onClick={() => handleEdit(selectedRecord)}>Edit day</button>
+                </header>
+                <div className="mobile-day-snapshot-group">
+                  <span className="mobile-day-snapshot-group-label">Performance</span>
+                  <div className="mobile-performance-chips mobile-day-snapshot-labels" aria-label="Daily performance indicators">
+                    {getMobilePerformanceLabels(selectedRecord).map((label) => (
+                      <LabelChip key={label} label={label} record={selectedRecord} />
+                    ))}
+                  </div>
+                </div>
+                {(selectedRecord.day_tags || []).length > 0 && (
+                  <div className="mobile-day-snapshot-group mobile-day-snapshot-context">
+                    <span className="mobile-day-snapshot-group-label">Context</span>
+                    <div className="mobile-inline-effects mobile-day-snapshot-effects" aria-label="Day context">
+                      {selectedRecord.day_tags.map((tag) => <DayTagChip tagValue={tag} key={tag} />)}
+                    </div>
+                  </div>
+                )}
+                {selectedDayQuickRecap && <p><strong>Quick recap:</strong> {selectedDayQuickRecap}</p>}
+              </section>
+            )}
+
             {weeklyRecapQuest && (
               <article className="mobile-context-card mobile-week-quest">
                 <div><span>Quest</span><strong>{weeklyRecapQuest.title}</strong></div>
@@ -3629,13 +4098,6 @@ function App() {
             )}
 
             <div className="mobile-week-detail-sections mobile-selection-content" key={`details-${selectedRecordDate || selectedWeekStart}`}>
-                {isSelectedDayMode && selectedRecord && <section className="mobile-selected-day-intro">
-                  <header>
-                    <div><span>Selected day</span><h2>Day details</h2></div>
-                    <button type="button" onClick={() => handleEdit(selectedRecord)}>Edit day</button>
-                  </header>
-                  {selectedDayQuickRecap && <p><strong>Quick recap:</strong> {selectedDayQuickRecap}</p>}
-                </section>}
                 <section>
                   <h2>Earnings breakdown</h2>
                   <div><span>Net fare</span><strong>${displayedNetFare.toFixed(2)}</strong></div>
@@ -3659,10 +4121,9 @@ function App() {
                     {selectedRecord.work_sessions.map((session, index) => <div key={`${session.start_time}-${index}`}><span>Session {index + 1}</span><strong>{session.start_time}–{session.stop_time}</strong></div>)}
                     {(selectedRecord.breaks || []).map((item, index) => <div key={`${item.start_time}-${index}`}><span>Break {index + 1}</span><strong>{item.start_time}–{item.end_time}</strong></div>)}
                   </section>}
-                  {((selectedRecord.day_tags || []).length > 0 || selectedRecord.notes) && <section>
-                    <h2>Context</h2>
-                    {(selectedRecord.day_tags || []).length > 0 && <div className="mobile-inline-effects">{selectedRecord.day_tags.map((tag) => <DayTagChip tagValue={tag} key={tag} />)}</div>}
-                    {selectedRecord.notes && <p className="mobile-inline-note">{selectedRecord.notes}</p>}
+                  {selectedRecord.notes && <section>
+                    <h2>Notes</h2>
+                    <p className="mobile-inline-note">{selectedRecord.notes}</p>
                   </section>}
                 </>}
                 {!isSelectedDayMode && weeklyQuickRecap && <section><h2>Weekly recap</h2><p>{weeklyQuickRecap}</p></section>}
@@ -3706,13 +4167,23 @@ function App() {
             </article>
             <article className="mobile-settings-card mobile-danger-setting"><div><strong>Delete daily records</strong><span>Type-to-confirm protection is required</span></div><button type="button" className="delete-button" onClick={handleOpenDeleteAll}>Delete all</button></article>
             <h2>Application</h2>
-            <div className="mobile-app-info"><strong>Uber Nest Tracker</strong><span>Version 4.0.0</span></div>
+            {!isStandaloneApp && (
+              <article className="mobile-settings-card mobile-install-card">
+                <div><strong>Install mobile app</strong><span>Open in its own window from your home screen</span></div>
+                {installPrompt ? (
+                  <button type="button" className="primary-button" onClick={installMobileApp}>Install</button>
+                ) : (
+                  <span className="mobile-install-hint">Use Chrome’s Add to Home screen menu</span>
+                )}
+              </article>
+            )}
+            <div className="mobile-app-info"><strong>Uber Nest Tracker</strong><span>Version 4.1.0</span></div>
           </section>
         )}
       </div>
 
       <section className="hero desktop-primary">
-        <p className="eyebrow">Uber Dashboard v4.0.0</p>
+        <p className="eyebrow">Uber Dashboard v4.1.0</p>
         <h1>Uber Nest Tracker</h1>
         <p className="subtitle">
           Track earnings, mileage truth, real time, and daily Uber efficiency.
@@ -3901,19 +4372,7 @@ function App() {
                       {" / "}
                       {featuredQuest.final_tier_trips} trips
                     </span>
-                    <span className="quest-progress-track">
-                      <span
-                        className="quest-progress-fill"
-                        style={{
-                          width: `${Math.min(
-                            (featuredQuest.progress_trips /
-                              featuredQuest.final_tier_trips) *
-                              100,
-                            100
-                          )}%`,
-                        }}
-                      ></span>
-                    </span>
+                    <QuestTierProgress quest={featuredQuest} />
                   </div>
 
                   <span className="quest-summary-bonus">
@@ -3960,19 +4419,7 @@ function App() {
                             {" / "}
                             {quest.final_tier_trips} trips
                           </span>
-                          <span className="quest-progress-track">
-                            <span
-                              className="quest-progress-fill"
-                              style={{
-                                width: `${Math.min(
-                                  (quest.progress_trips /
-                                    quest.final_tier_trips) *
-                                    100,
-                                  100
-                                )}%`,
-                              }}
-                            ></span>
-                          </span>
+                          <QuestTierProgress quest={quest} />
                         </div>
 
                         <div className="quest-progress-card-bonus-summary">
@@ -4610,20 +5057,10 @@ function App() {
           </div>
         </div>
 
-        {(error || successMessage) && (
-          <div className="daily-log-notification-area">
-            {error && (
-              <p className="error" role="alert">
-                Error: {error}
-              </p>
-            )}
-            {successMessage && (
-              <p className="success" role="status">
-                {successMessage}
-              </p>
-            )}
-          </div>
-        )}
+        <div className="daily-log-notification-area">
+          <AnimatedNotification message={error} type="error" />
+          <AnimatedNotification message={successMessage} type="success" />
+        </div>
 
         {importPreview && (
           <div className="import-preview-panel">
@@ -4697,7 +5134,10 @@ function App() {
         )}
 
       {(isFormOpen || editingDate) && (
-      <section className="form-section" ref={formSectionRef}>
+      <section
+        className={`form-section ${isDailyLogFormClosing ? "form-section-closing" : ""}`}
+        ref={formSectionRef}
+      >
         <div className="form-section-header">
           <h2>{editingDate ? `Edit daily log: ${editingDate}` : "Add daily log"}</h2>
           <button type="button" className="mobile-form-close" onClick={cancelEdit} aria-label="Close form">×</button>
@@ -4873,13 +5313,14 @@ function App() {
                         <span className="day-tag-tooltip-wrap" key={tag.value}>
                           <button
                             type="button"
-                            className={`day-tag-toggle ${isSelected ? "day-tag-toggle-active" : ""}`}
+                            className={`day-tag-toggle day-tag-toggle-${group.category} ${isSelected ? "day-tag-toggle-active" : ""}`}
                             onClick={(event) => {
                               toggleDayTag(tag.value);
                               event.currentTarget.blur();
                             }}
                             aria-pressed={isSelected}
                           >
+                            <DayTagIcon category={group.category} />
                             {tag.label}
                           </button>
                           <span className="day-tag-tooltip" role="tooltip">
@@ -5558,7 +5999,10 @@ function App() {
       </nav>
 
       {isQuickUpdateOpen && mobileDayRecord && (
-        <div className="mobile-sheet-overlay" onClick={() => !isSavingQuickUpdate && setIsQuickUpdateOpen(false)}>
+        <div
+          className={`mobile-sheet-overlay ${closingMobileSheet === "quick-update" ? "mobile-sheet-closing" : ""}`}
+          onClick={closeQuickUpdateSheet}
+        >
           <form className="mobile-quick-sheet" onSubmit={saveQuickUpdate} onClick={(event) => event.stopPropagation()}>
             <div className="mobile-sheet-handle"></div>
             <div className="mobile-sheet-heading">
@@ -5566,7 +6010,7 @@ function App() {
                 <span>Quick update</span>
                 <h2>{formatMobileDate(mobileDayRecord.date)}</h2>
               </div>
-              <button type="button" onClick={() => setIsQuickUpdateOpen(false)} aria-label="Close quick update">×</button>
+              <button type="button" onClick={closeQuickUpdateSheet} aria-label="Close quick update">×</button>
             </div>
             <div className="mobile-quick-grid">
               <label>
@@ -5591,7 +6035,7 @@ function App() {
               </label>
             </div>
             <div className="mobile-sheet-actions">
-              <button type="button" onClick={() => setIsQuickUpdateOpen(false)} disabled={isSavingQuickUpdate}>Cancel</button>
+              <button type="button" onClick={closeQuickUpdateSheet} disabled={isSavingQuickUpdate}>Cancel</button>
               <button type="submit" className="primary-button" disabled={isSavingQuickUpdate}>{isSavingQuickUpdate ? "Saving…" : "Save update"}</button>
             </div>
           </form>
@@ -5599,7 +6043,10 @@ function App() {
       )}
 
       {mobileTrackingAction && (
-        <div className="mobile-sheet-overlay" onClick={() => !isSavingMobileTracking && setMobileTrackingAction(null)}>
+        <div
+          className={`mobile-sheet-overlay ${closingMobileSheet === "tracking" ? "mobile-sheet-closing" : ""}`}
+          onClick={closeMobileTrackingSheet}
+        >
           <form className="mobile-quick-sheet mobile-tracking-sheet" onSubmit={handleMobileTrackingSubmit} onClick={(event) => event.stopPropagation()}>
             <div className="mobile-sheet-handle"></div>
             <div className="mobile-sheet-heading">
@@ -5610,9 +6057,11 @@ function App() {
                   start_break: "Start break",
                   resume_session: "Resume session",
                   end_session: "End session",
+                  record_home: "Record final return home",
+                  edit_home: "Edit final return home",
                 }[mobileTrackingAction]}</h2>
               </div>
-              <button type="button" onClick={() => setMobileTrackingAction(null)} aria-label="Close live tracking">×</button>
+              <button type="button" onClick={closeMobileTrackingSheet} aria-label="Close live tracking">×</button>
             </div>
             {mobileTrackingAction === "end_session" && isMobileBreakRunning && <p className="mobile-tracking-notice">The active break will end at the same time as this session.</p>}
             <div className="mobile-tracking-fields">
@@ -5629,12 +6078,80 @@ function App() {
               </label>
             </div>
             <div className="mobile-sheet-actions">
-              <button type="button" onClick={() => setMobileTrackingAction(null)} disabled={isSavingMobileTracking}>Cancel</button>
+              <button type="button" onClick={closeMobileTrackingSheet} disabled={isSavingMobileTracking}>Cancel</button>
               <button type="submit" className="primary-button" disabled={isSavingMobileTracking}>{isSavingMobileTracking ? "Saving…" : "Confirm"}</button>
             </div>
           </form>
         </div>
       )}
+
+      {mobileDraftEditTarget && activeMobileShift && (() => {
+        const targetSession = activeMobileShift.sessions[mobileDraftEditTarget.sessionIndex];
+        const targetItem = mobileDraftEditTarget.kind === "break"
+          ? targetSession?.breaks?.[mobileDraftEditTarget.breakIndex]
+          : targetSession;
+        const hasEndTime = Boolean(
+          mobileDraftEditTarget.kind === "break"
+            ? targetItem?.end_time
+            : targetItem?.stop_time
+        );
+        const title = mobileDraftEditTarget.kind === "break"
+          ? `Edit Break ${mobileDraftEditTarget.breakIndex + 1}`
+          : `Edit Session ${mobileDraftEditTarget.sessionIndex + 1}`;
+        return (
+          <div
+            className={`mobile-sheet-overlay ${closingMobileSheet === "draft-edit" ? "mobile-sheet-closing" : ""}`}
+            onClick={closeMobileDraftEditSheet}
+          >
+            <form className="mobile-quick-sheet mobile-draft-edit-sheet" onSubmit={saveMobileDraftEdit} onClick={(event) => event.stopPropagation()}>
+              <div className="mobile-sheet-handle"></div>
+              <div className="mobile-sheet-heading">
+                <div><span>Live tracking</span><h2>{title}</h2></div>
+                <button type="button" onClick={closeMobileDraftEditSheet} aria-label={`Close ${title}`}>×</button>
+              </div>
+              {mobileDraftEditError && <p className="mobile-sheet-error" role="alert">{mobileDraftEditError}</p>}
+              <div className="mobile-draft-edit-segment">
+                <strong>Start</strong>
+                <div className="mobile-tracking-fields">
+                  <label>
+                    Time
+                    <div className="mobile-time-entry">
+                      <input type="text" inputMode="numeric" value={mobileDraftEditForm.start_time_value} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, start_time_value: event.target.value }))} placeholder="5:30" required />
+                      <select value={mobileDraftEditForm.start_time_meridiem} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, start_time_meridiem: event.target.value }))}><option>AM</option><option>PM</option></select>
+                    </div>
+                  </label>
+                  <label>
+                    Odometer <span>optional</span>
+                    <input type="number" inputMode="decimal" min="0" step="0.1" value={mobileDraftEditForm.start_odometer} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, start_odometer: event.target.value }))} placeholder="Starting mileage" />
+                  </label>
+                </div>
+              </div>
+              {hasEndTime && (
+                <div className="mobile-draft-edit-segment">
+                  <strong>{mobileDraftEditTarget.kind === "break" ? "End" : "Stop"}</strong>
+                  <div className="mobile-tracking-fields">
+                    <label>
+                      Time
+                      <div className="mobile-time-entry">
+                        <input type="text" inputMode="numeric" value={mobileDraftEditForm.end_time_value} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, end_time_value: event.target.value }))} placeholder="5:30" required />
+                        <select value={mobileDraftEditForm.end_time_meridiem} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, end_time_meridiem: event.target.value }))}><option>AM</option><option>PM</option></select>
+                      </div>
+                    </label>
+                    <label>
+                      Odometer <span>optional</span>
+                      <input type="number" inputMode="decimal" min="0" step="0.1" value={mobileDraftEditForm.end_odometer} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, end_odometer: event.target.value }))} placeholder="Ending mileage" />
+                    </label>
+                  </div>
+                </div>
+              )}
+              <div className="mobile-sheet-actions">
+                <button type="button" onClick={closeMobileDraftEditSheet} disabled={isSavingMobileDraftEdit}>Cancel</button>
+                <button type="submit" className="primary-button" disabled={isSavingMobileDraftEdit}>{isSavingMobileDraftEdit ? "Saving…" : "Save changes"}</button>
+              </div>
+            </form>
+          </div>
+        );
+      })()}
 
       {isQuestManagerOpen && (
         <div className="quest-manager-overlay" onClick={closeQuestManager}>

@@ -48,8 +48,20 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  min-height: 100%;
+  background: var(--bg-page);
+}
+
+html {
+  color-scheme: dark;
+}
+
 body {
   margin: 0;
+  min-height: 100dvh;
   background: var(--bg-page);
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
@@ -112,6 +124,51 @@ h1 {
   font-size: 14px;
   text-align: center;
   margin-bottom: 20px;
+}
+
+.app-notification {
+  overflow: hidden;
+  transform-origin: top center;
+  animation: notificationIn 220ms cubic-bezier(.2, .75, .2, 1) both;
+}
+
+.app-notification.app-notification-leaving {
+  pointer-events: none;
+  animation: notificationOut 200ms ease-in both;
+}
+
+@keyframes notificationIn {
+  from {
+    max-height: 0;
+    border-top-width: 0;
+    border-bottom-width: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    transform: translateY(-7px) scale(.985);
+  }
+  to {
+    max-height: 180px;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes notificationOut {
+  from {
+    max-height: 180px;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    max-height: 0;
+    border-top-width: 0;
+    border-bottom-width: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    transform: translateY(-5px) scale(.99);
+  }
 }
 
 /* Summary cards */
@@ -854,6 +911,12 @@ th {
   padding: 20px;
   margin-top: 16px;
   margin-bottom: 20px;
+  animation: dailyLogFormIn 260ms cubic-bezier(.2, .75, .2, 1) both;
+}
+
+.form-section.form-section-closing {
+  pointer-events: none;
+  animation: dailyLogFormOut 240ms ease-in both;
 }
 
 .form-section-header {
@@ -866,12 +929,24 @@ th {
 
 .form-section-header h2 {
   margin: 0;
+  color: var(--text-primary);
 }
 
 .form-section h2 {
   margin-top: 0;
+  color: var(--text-primary);
   font-size: 18px;
   font-weight: 600;
+}
+
+@keyframes dailyLogFormIn {
+  from { opacity: 0; transform: translateY(10px) scale(.992); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes dailyLogFormOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(12px) scale(.992); }
 }
 
 .entry-form {
@@ -1175,6 +1250,10 @@ th {
 }
 
 .day-tag-toggle {
+  --day-tag-rgb: 127, 179, 238;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   padding: 6px 14px;
@@ -1190,13 +1269,37 @@ th {
 }
 
 .day-tag-toggle-active {
-  background: var(--accent-bg);
-  border-color: rgba(74, 144, 226, 0.4);
-  color: var(--accent-text);
+  background: rgba(var(--day-tag-rgb), 0.15);
+  border-color: rgba(var(--day-tag-rgb), 0.42);
+  color: rgb(var(--day-tag-rgb));
 }
 
 .day-tag-toggle-active:hover {
-  background: rgba(74, 144, 226, 0.24);
+  background: rgba(var(--day-tag-rgb), 0.23);
+}
+
+.day-tag-toggle-weather {
+  --day-tag-rgb: 143, 184, 216;
+  border-color: rgba(var(--day-tag-rgb), 0.22);
+  color: rgba(var(--day-tag-rgb), 0.82);
+}
+
+.day-tag-toggle-traffic {
+  --day-tag-rgb: 194, 163, 216;
+  border-color: rgba(var(--day-tag-rgb), 0.22);
+  color: rgba(var(--day-tag-rgb), 0.82);
+}
+
+.day-tag-toggle-orders {
+  --day-tag-rgb: 159, 192, 160;
+  border-color: rgba(var(--day-tag-rgb), 0.22);
+  color: rgba(var(--day-tag-rgb), 0.82);
+}
+
+.day-tag-toggle-operational {
+  --day-tag-rgb: 201, 176, 136;
+  border-color: rgba(var(--day-tag-rgb), 0.22);
+  color: rgba(var(--day-tag-rgb), 0.82);
 }
 
 /* The category icon shared by the form group labels, selected-day chips,
@@ -1233,8 +1336,8 @@ th {
   gap: 5px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  padding: 4px 11px;
-  font-size: 12px;
+  padding: 6px 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
   background: var(--bg-surface-2);
@@ -1259,19 +1362,31 @@ th {
 
 /* Per-category neutral tints — muted, no green/red sentiment. */
 .day-tag-chip-weather {
+  --day-tag-rgb: 143, 184, 216;
   color: #8fb8d8;
 }
 
 .day-tag-chip-traffic {
+  --day-tag-rgb: 194, 163, 216;
   color: #c2a3d8;
 }
 
 .day-tag-chip-orders {
+  --day-tag-rgb: 159, 192, 160;
   color: #9fc0a0;
 }
 
 .day-tag-chip-operational {
+  --day-tag-rgb: 201, 176, 136;
   color: #c9b088;
+}
+
+.day-tag-chip-weather,
+.day-tag-chip-traffic,
+.day-tag-chip-orders,
+.day-tag-chip-operational {
+  border-color: rgba(var(--day-tag-rgb), .42);
+  background: rgba(var(--day-tag-rgb), .15);
 }
 
 /* Compact variant used inside the table's Effects column — smaller padding
@@ -1282,7 +1397,8 @@ th {
   padding: 2px 9px;
   font-size: 11px;
   gap: 4px;
-  border-color: var(--border);
+  border-color: rgba(var(--day-tag-rgb), .25);
+  background: rgba(var(--day-tag-rgb), .08);
 }
 
 .day-tag-tooltip {
@@ -1961,6 +2077,7 @@ th {
 }
 
 .quest-progress-track {
+  position: relative;
   display: block;
   height: 7px;
   overflow: hidden;
@@ -1974,6 +2091,44 @@ th {
   border-radius: inherit;
   background: var(--accent);
   transition: width 240ms ease;
+}
+
+.quest-tier-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+  transition: width 300ms ease, background-color 220ms ease;
+}
+
+.quest-tier-fill-first {
+  left: 0;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.quest-tier-progress.first-tier-reached .quest-tier-fill-first {
+  border-radius: 999px 0 0 999px;
+}
+
+.quest-tier-fill-final {
+  border-radius: 0 999px 999px 0;
+  background: var(--success-fill);
+}
+
+.quest-tier-progress.final-tier-reached .quest-tier-fill-final {
+  background: var(--success-text);
+}
+
+.quest-tier-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 1px;
+  transform: translateX(-.5px);
+  background: rgba(139, 147, 161, .68);
+  box-shadow: 0 0 0 1px rgba(26, 29, 36, .18);
 }
 
 .quest-summary-bonus {
@@ -2968,6 +3123,11 @@ th {
   margin: 12px 0 24px;
 }
 
+.daily-log-notification-area:empty {
+  display: none;
+  margin: 0;
+}
+
 .daily-log-notification-area .error,
 .daily-log-notification-area .success {
   margin: 0;
@@ -3426,15 +3586,85 @@ th {
     margin-bottom: 12px;
   }
 
+  .mobile-notification-area:empty {
+    display: none;
+    margin: 0;
+  }
+
   .mobile-notification-area .error,
   .mobile-notification-area .success {
     margin: 0;
     padding: 10px 12px;
-    text-align: left;
+    text-align: center;
+    line-height: 1.45;
+  }
+
+  .mobile-connection-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+    border: 1px solid rgba(230, 160, 60, 0.34);
+    border-radius: var(--radius-md);
+    padding: 12px;
+    background: var(--warning-bg);
+  }
+
+  .mobile-connection-banner > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .mobile-connection-banner strong {
+    color: var(--warning-text);
+    font-size: 13px;
+  }
+
+  .mobile-connection-banner span {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .mobile-connection-banner button {
+    min-height: 36px;
+    flex: 0 0 auto;
+    padding: 7px 10px;
   }
 
   .mobile-tab-panel {
     width: 100%;
+  }
+
+  .mobile-app-shell button,
+  .mobile-bottom-nav button,
+  .mobile-sheet-overlay button,
+  .mobile-app-shell summary {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  .mobile-app-shell button:active:not(:disabled),
+  .mobile-bottom-nav button:active:not(:disabled),
+  .mobile-sheet-overlay button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .mobile-app-shell button:focus:not(:focus-visible),
+  .mobile-bottom-nav button:focus:not(:focus-visible),
+  .mobile-sheet-overlay button:focus:not(:focus-visible) {
+    outline: none;
+    box-shadow: none;
+  }
+
+  .mobile-app-shell button:focus-visible,
+  .mobile-bottom-nav button:focus-visible,
+  .mobile-sheet-overlay button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .mobile-day-hero,
@@ -3563,6 +3793,13 @@ th {
   .mobile-live-tracker.active {
     border-color: rgba(59, 167, 118, 0.32);
     background: linear-gradient(145deg, var(--success-bg), var(--bg-surface-1) 66%);
+    animation: mobileStateIn 280ms ease-out both, mobileTrackerBreath 3s ease-in-out infinite;
+  }
+
+  .mobile-live-tracker.active.on-break {
+    border-color: rgba(230, 160, 60, 0.38);
+    background: linear-gradient(145deg, var(--warning-bg), var(--bg-surface-1) 66%);
+    animation-name: mobileStateIn, mobileBreakTrackerBreath;
   }
 
   .mobile-section-heading h2 {
@@ -3585,6 +3822,13 @@ th {
     color: var(--success-text);
     font-size: 11px;
     font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .mobile-live-dot.break {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    animation-name: mobileBreakLivePulse;
   }
 
   .mobile-live-detail,
@@ -3672,13 +3916,6 @@ th {
     overflow: hidden;
     border-radius: 999px;
     background: var(--bg-page);
-  }
-
-  .mobile-progress-track > span {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent);
   }
 
   .mobile-context-tags {
@@ -3844,8 +4081,7 @@ th {
     min-height: 66px;
     padding: 5px 6px calc(5px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--border-strong);
-    background: rgba(26, 29, 36, 0.96);
-    backdrop-filter: blur(16px);
+    background: var(--bg-page);
   }
 
   .mobile-bottom-nav button {
@@ -3987,10 +4223,21 @@ th {
     height: 100svh;
     margin: 0;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
     border: none;
     border-radius: 0;
     padding: 18px 14px calc(96px + env(safe-area-inset-bottom));
     background: var(--bg-page);
+    animation-name: mobileDailyLogFormIn;
+    animation-duration: 280ms;
+    animation-timing-function: cubic-bezier(.2, .75, .2, 1);
+  }
+
+  .table-section.desktop-primary > .form-section.form-section-closing {
+    animation-name: mobileDailyLogFormOut;
+    animation-duration: 240ms;
+    animation-timing-function: ease-in;
   }
 
   .form-section-header {
@@ -4005,6 +4252,7 @@ th {
   }
 
   .form-section-header h2 {
+    color: var(--text-primary);
     font-size: 20px;
   }
 
@@ -4241,6 +4489,19 @@ th {
     font-size: 13px;
   }
 
+  .mobile-performance-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: -5px 0 16px;
+  }
+
+  .mobile-performance-chips .label-chip {
+    min-height: 30px;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
   .mobile-live-tracker {
     margin-top: 0;
     border-radius: 18px;
@@ -4290,16 +4551,86 @@ th {
   }
 
   .mobile-session-delete {
-    grid-column: 1 / -1;
-    justify-self: end;
     max-width: 100%;
     min-height: 32px;
-    margin-top: 5px;
     border-color: rgba(224, 90, 90, 0.32);
     padding: 5px 10px;
     background: transparent;
     color: var(--danger-text);
     font-size: 11px;
+  }
+
+  .mobile-session-edit {
+    min-height: 32px;
+    border-color: var(--border-strong);
+    padding: 5px 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+
+  .mobile-session-row-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+    gap: 7px;
+    margin-top: 5px;
+  }
+
+  .mobile-break-timeline-row {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+    gap: 7px;
+  }
+
+  .mobile-break-timeline-row small {
+    min-width: 0;
+    text-align: right;
+  }
+
+  .mobile-break-timeline-row button {
+    min-height: 27px;
+    flex: 0 0 auto;
+    border: none;
+    padding: 3px 5px;
+    background: transparent;
+    color: var(--accent-text);
+    font-size: 10px;
+  }
+
+  .mobile-sheet-error {
+    margin: 12px 0 0;
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    font-size: 12px;
+    line-height: 1.45;
+    text-align: center;
+  }
+
+  .mobile-draft-edit-segment {
+    margin-top: 16px;
+  }
+
+  .mobile-draft-edit-segment > strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  .mobile-return-home-row {
+    border-top-color: rgba(77, 150, 230, 0.28) !important;
+  }
+
+  .mobile-return-home-row > .mobile-session-edit {
+    grid-column: 1 / -1;
+    justify-self: end;
+    margin-top: 5px;
   }
 
   .mobile-session-delete:hover:not(:disabled),
@@ -4365,6 +4696,16 @@ th {
     min-height: 52px;
     padding: 9px 10px;
     white-space: normal;
+  }
+
+  .mobile-home-button {
+    border-color: rgba(77, 150, 230, 0.38);
+    background: var(--accent-bg);
+    color: var(--accent-text);
+  }
+
+  .mobile-finalize-button {
+    grid-column: 1 / -1;
   }
 
   .mobile-context-card,
@@ -4633,20 +4974,27 @@ th {
     animation: mobileSelectionIn 240ms ease-out both;
   }
 
-  .mobile-selected-day-intro header {
+  .mobile-selected-day-snapshot {
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 4px;
+  }
+
+  .mobile-selected-day-snapshot header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
   }
 
-  .mobile-selected-day-intro header > div {
+  .mobile-selected-day-snapshot header > div {
     display: block;
     border: none;
     padding: 0;
   }
 
-  .mobile-selected-day-intro header span {
+  .mobile-selected-day-snapshot header span {
     color: var(--accent-text);
     font-size: 11px;
     font-weight: 700;
@@ -4654,16 +5002,57 @@ th {
     text-transform: uppercase;
   }
 
-  .mobile-selected-day-intro header h2 {
+  .mobile-selected-day-snapshot header h2 {
     margin: 2px 0 0;
+    color: var(--text-primary);
+    font-size: 20px;
   }
 
-  .mobile-selected-day-intro header button {
+  .mobile-selected-day-snapshot header button {
     min-height: 42px;
     color: var(--accent-text);
   }
 
-  .mobile-selected-day-intro p strong {
+  .mobile-day-snapshot-labels {
+    justify-content: flex-start;
+    margin: 8px 0 0;
+  }
+
+  .mobile-day-snapshot-group {
+    margin-top: 16px;
+  }
+
+  .mobile-day-snapshot-group-label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+  }
+
+  .mobile-day-snapshot-context {
+    border-top: 1px dashed var(--border);
+    padding-top: 14px;
+  }
+
+  .mobile-day-snapshot-effects {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 9px;
+  }
+
+  .mobile-selected-day-snapshot p {
+    margin: 16px 0 0;
+    border-top: 1px dashed var(--border);
+    padding-top: 14px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .mobile-selected-day-snapshot p strong {
     color: var(--text-primary);
   }
 
@@ -4813,6 +5202,18 @@ th {
     border-radius: var(--radius-md);
   }
 
+  .mobile-install-card {
+    margin-bottom: 10px;
+  }
+
+  .mobile-install-hint {
+    max-width: 135px;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.35;
+    text-align: right;
+  }
+
   .mobile-tracking-fields {
     display: grid;
     gap: 14px;
@@ -4868,8 +5269,17 @@ th {
     animation: mobileSheetIn 280ms cubic-bezier(.2, .75, .2, 1) both;
   }
 
+  .mobile-sheet-overlay.mobile-sheet-closing {
+    pointer-events: none;
+    animation: mobileOverlayOut 180ms ease-in both;
+  }
+
+  .mobile-sheet-overlay.mobile-sheet-closing .mobile-quick-sheet {
+    animation: mobileSheetOut 220ms cubic-bezier(.4, 0, 1, 1) both;
+  }
+
   .mobile-live-dot {
-    animation: mobileLivePulse 2.2s ease-in-out infinite;
+    animation: mobileLivePulse 3s ease-in-out infinite;
   }
 
   @keyframes mobileBarRise {
@@ -4907,9 +5317,44 @@ th {
     to { transform: translateY(0); opacity: 1; }
   }
 
+  @keyframes mobileOverlayOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  @keyframes mobileSheetOut {
+    from { transform: translateY(0); opacity: 1; }
+    to { transform: translateY(34px); opacity: 0; }
+  }
+
+  @keyframes mobileDailyLogFormIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes mobileDailyLogFormOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
   @keyframes mobileLivePulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(59, 167, 118, 0); }
-    50% { box-shadow: 0 0 0 6px rgba(59, 167, 118, .08); }
+    0%, 40%, 100% { box-shadow: 0 0 0 0 rgba(59, 167, 118, 0); }
+    20% { box-shadow: 0 0 0 6px rgba(59, 167, 118, .13); }
+  }
+
+  @keyframes mobileBreakLivePulse {
+    0%, 40%, 100% { box-shadow: 0 0 0 0 rgba(230, 160, 60, 0); }
+    20% { box-shadow: 0 0 0 6px rgba(230, 160, 60, .14); }
+  }
+
+  @keyframes mobileTrackerBreath {
+    0%, 50%, 90%, 100% { box-shadow: 0 0 0 0 rgba(59, 167, 118, 0.02); }
+    70% { box-shadow: 0 0 0 5px rgba(59, 167, 118, 0.12), 0 12px 34px rgba(20, 105, 73, 0.16); }
+  }
+
+  @keyframes mobileBreakTrackerBreath {
+    0%, 50%, 90%, 100% { box-shadow: 0 0 0 0 rgba(230, 160, 60, 0.02); }
+    70% { box-shadow: 0 0 0 5px rgba(230, 160, 60, 0.12), 0 12px 34px rgba(120, 75, 20, 0.16); }
   }
 }
 
@@ -4932,6 +5377,8 @@ th {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .app-notification,
+  .form-section,
   .mobile-tab-panel,
   .mobile-live-tracker,
   .mobile-today-action-dock,

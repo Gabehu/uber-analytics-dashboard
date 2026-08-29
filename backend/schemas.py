@@ -152,6 +152,8 @@ class DraftWorkSession(BaseModel):
 class DailyDraftUpsert(BaseModel):
     date: str
     sessions: list[DraftWorkSession] = Field(default_factory=list)
+    home_end_time: str | None = None
+    end_home_odometer: float | None = None
 
 
 class DailyDraft(DailyDraftUpsert):

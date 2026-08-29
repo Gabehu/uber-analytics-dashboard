@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Uber Nest Tracker",
+  "short_name": "Uber Nest",
+  "description": "Track Uber earnings, live sessions, breaks, mileage, quests, and efficiency.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1a1d24",
+  "theme_color": "#1a1d24",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

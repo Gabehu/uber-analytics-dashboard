@@ -173,6 +173,18 @@ class DatabaseBehaviorTests(unittest.TestCase):
         self.assertEqual(between_sessions["status"], "between_sessions")
         self.assertEqual(database.get_daily_drafts()[0]["sessions"][0]["stop_odometer"], 140)
 
+        returned_home = database.upsert_daily_draft(
+            DailyDraftUpsert(
+                date="2031-01-09",
+                sessions=between_sessions["sessions"],
+                home_end_time="4:25 PM",
+                end_home_odometer=146,
+            )
+        )
+        self.assertEqual(returned_home["status"], "returned_home")
+        self.assertEqual(returned_home["home_end_time"], "4:25 PM")
+        self.assertEqual(returned_home["end_home_odometer"], 146)
+
     def test_live_draft_rejects_a_break_outside_its_session(self):
         with self.assertRaisesRegex(ValueError, "inside its session"):
             database.upsert_daily_draft(
@@ -185,6 +197,23 @@ class DatabaseBehaviorTests(unittest.TestCase):
                             breaks=[DraftBreak(start_time="12:30 PM", end_time="2:00 PM")],
                         )
                     ],
+                )
+            )
+
+    def test_live_draft_rejects_return_home_before_session_stop(self):
+        with self.assertRaisesRegex(ValueError, "earlier than the last session stop"):
+            database.upsert_daily_draft(
+                DailyDraftUpsert(
+                    date="2031-01-09",
+                    sessions=[
+                        DraftWorkSession(
+                            start_time="12:00 PM",
+                            stop_time="4:00 PM",
+                            stop_odometer=140,
+                        )
+                    ],
+                    home_end_time="3:45 PM",
+                    end_home_odometer=145,
                 )
             )
 
