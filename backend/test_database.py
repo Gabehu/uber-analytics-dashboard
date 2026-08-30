@@ -8,6 +8,7 @@ from schemas import (
     DailyRecordCreate,
     DailyDraftUpsert,
     DraftBreak,
+    DraftTripEvent,
     DraftWorkSession,
     QuestCreate,
     WorkSessionCreate,
@@ -60,6 +61,53 @@ class DatabaseBehaviorTests(unittest.TestCase):
         occupied = moved.model_copy(update={"date": "2031-01-08"})
         with self.assertRaises(database.DailyDateConflictError):
             database.update_daily_record(moved.date, occupied)
+
+    def test_finalized_trip_events_survive_edits_and_date_moves(self):
+        trip_event = DraftTripEvent(
+            id="trip-permanent-one",
+            completed_at="2031-01-06T19:15:00.000Z",
+            session_id="session-one",
+        )
+        record = self.record(trip_events=[trip_event])
+        saved = database.create_daily_record(record)
+        self.assertEqual(saved["trip_events"][0]["id"], "trip-permanent-one")
+
+        moved = record.model_copy(
+            update={"date": "2031-01-07", "tips": 12, "trip_events": None}
+        )
+        updated = database.update_daily_record(record.date, moved)
+        self.assertEqual(updated["trip_events"], saved["trip_events"])
+
+        loaded = next(
+            item for item in database.get_daily_data() if item["date"] == moved.date
+        )
+        self.assertEqual(loaded["trip_events"], saved["trip_events"])
+
+    def test_csv_backup_restores_finalized_trip_events(self):
+        record = self.record(
+            trip_events=[
+                DraftTripEvent(
+                    id="trip-backup-one",
+                    completed_at="2031-01-06T20:45:00.000Z",
+                    session_id="session-one",
+                )
+            ]
+        )
+        database.create_daily_record(record)
+        backup = database.get_daily_csv()
+
+        database.delete_all_daily_records()
+        result = database.commit_csv_import(backup)
+        self.assertEqual(result["error_count"], 0)
+
+        restored = next(
+            item for item in database.get_daily_data() if item["date"] == record.date
+        )
+        self.assertEqual(restored["trip_events"][0]["id"], "trip-backup-one")
+        self.assertEqual(
+            restored["trip_events"][0]["completed_at"],
+            "2031-01-06T20:45:00.000Z",
+        )
 
     def test_sessions_and_breaks_preserve_real_time_and_work_mileage_rules(self):
         record = self.record(
@@ -184,6 +232,54 @@ class DatabaseBehaviorTests(unittest.TestCase):
         self.assertEqual(returned_home["status"], "returned_home")
         self.assertEqual(returned_home["home_end_time"], "4:25 PM")
         self.assertEqual(returned_home["end_home_odometer"], 146)
+
+    def test_live_draft_persists_completed_trips_context_and_notes(self):
+        saved = database.upsert_daily_draft(
+            DailyDraftUpsert(
+                date="2031-01-10",
+                sessions=[
+                    DraftWorkSession(
+                        id="session-one",
+                        start_time="12:00 PM",
+                        stop_time="4:00 PM",
+                    )
+                ],
+                trip_events=[
+                    DraftTripEvent(
+                        id="trip-one",
+                        completed_at="2031-01-10T19:15:00.000Z",
+                        session_id="session-one",
+                    )
+                ],
+                day_tags=["high_demand", "delivery_heavy"],
+                notes="  Orders stayed steady.  ",
+            )
+        )
+
+        self.assertEqual(len(saved["trip_events"]), 1)
+        self.assertEqual(saved["trip_events"][0]["session_id"], "session-one")
+        self.assertEqual(saved["day_tags"], ["high_demand", "delivery_heavy"])
+        self.assertEqual(saved["notes"], "Orders stayed steady.")
+
+        loaded = database.get_daily_drafts()[0]
+        self.assertEqual(loaded["sessions"][0]["id"], "session-one")
+        self.assertEqual(loaded["trip_events"], saved["trip_events"])
+
+    def test_live_draft_rejects_trip_for_missing_session(self):
+        with self.assertRaisesRegex(ValueError, "saved work session"):
+            database.upsert_daily_draft(
+                DailyDraftUpsert(
+                    date="2031-01-10",
+                    sessions=[DraftWorkSession(id="session-one", start_time="12:00 PM")],
+                    trip_events=[
+                        DraftTripEvent(
+                            id="trip-one",
+                            completed_at="2031-01-10T19:15:00.000Z",
+                            session_id="missing-session",
+                        )
+                    ],
+                )
+            )
 
     def test_live_draft_rejects_a_break_outside_its_session(self):
         with self.assertRaisesRegex(ValueError, "inside its session"):

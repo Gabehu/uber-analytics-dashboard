@@ -283,6 +283,15 @@ function QuestTierProgress({ quest, className = "" }) {
   );
 }
 
+const QUEST_CONFETTI_PARTICLES = [
+  [-132, -62, -220, 0], [-104, -94, 170, 40], [-72, -72, -130, 90],
+  [-38, -104, 230, 20], [-8, -78, -190, 110], [30, -108, 150, 55],
+  [62, -76, -250, 125], [96, -98, 210, 75], [128, -58, -160, 15],
+  [-118, -20, 190, 130], [-78, -34, -210, 165], [74, -28, 240, 145],
+  [116, -16, -180, 105], [-48, -46, 140, 190], [42, -52, -230, 175],
+  [4, -118, 260, 150],
+];
+
 // The "+N" overflow pill in the table's Effects column. Same styled-tooltip
 // pattern as DayTagChip/LabelChip, but lists every hidden tag (each with its
 // own category icon) instead of a single sentence, since there can be
@@ -404,6 +413,22 @@ function getCurrentTimeParts() {
     stored: `${displayHour}:${minutes} ${meridiem}`,
     display: `${displayHour}:${minutes} ${meridiem}`,
   };
+}
+
+function createMobileEventId(prefix) {
+  if (window.crypto?.randomUUID) {
+    return `${prefix}-${window.crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function formatCompletedTripTime(timestamp) {
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return "Recently";
+  return parsed.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function formatMobileDate(dateString) {
@@ -1202,6 +1227,17 @@ function App() {
     end_time_meridiem: "PM",
     end_odometer: "",
   });
+  const [isSavingMobileTrip, setIsSavingMobileTrip] = useState(false);
+  const mobileTripSavingRef = useRef(false);
+  const [mobileQuestCelebration, setMobileQuestCelebration] = useState(null);
+  const mobileQuestCelebrationTimerRef = useRef(null);
+  const [isMobileDraftDetailsOpen, setIsMobileDraftDetailsOpen] = useState(false);
+  const [isSavingMobileDraftDetails, setIsSavingMobileDraftDetails] = useState(false);
+  const [mobileDraftDetailsError, setMobileDraftDetailsError] = useState("");
+  const [mobileDraftDetailsForm, setMobileDraftDetailsForm] = useState({
+    day_tags: [],
+    notes: "",
+  });
   const [mobileNow, setMobileNow] = useState(() => Date.now());
   const [closingMobileSheet, setClosingMobileSheet] = useState(null);
   const mobileSheetCloseTimerRef = useRef(null);
@@ -1733,18 +1769,48 @@ function App() {
   const mobileLiveStartedAt = isMobileBreakRunning
     ? activeMobileBreak?.start_time
     : activeMobileSession?.start_time;
-  const mobileLiveElapsedLabel = (() => {
-    if (!mobileLiveStartedAt) return null;
+  const mobileDraftTripCount = activeMobileShift?.trip_events?.length || 0;
+  const latestMobileTrip = activeMobileShift?.trip_events?.at(-1) || null;
+  const mobileFeaturedQuestPreview = mobileFeaturedQuest
+    ? {
+        ...mobileFeaturedQuest,
+        progress_trips:
+          mobileFeaturedQuest.progress_trips +
+          mobileDrafts.reduce((total, draft) => {
+            if (
+              draft.date < mobileFeaturedQuest.start_date ||
+              draft.date > mobileFeaturedQuest.end_date
+            ) {
+              return total;
+            }
+            return total + (draft.trip_events?.length || 0);
+          }, 0),
+      }
+    : null;
+  const mobileLiveTiming = (() => {
+    if (!mobileLiveStartedAt) return { label: null, isFuture: false };
     const parts = splitStoredTime(mobileLiveStartedAt);
     const startMinutes = timeToMinutes(parts.timeValue, parts.meridiem);
-    if (startMinutes === null) return null;
+    if (startMinutes === null) return { label: null, isFuture: false };
     const now = new Date(mobileNow);
-    let elapsedMinutes = now.getHours() * 60 + now.getMinutes() - startMinutes;
-    if (elapsedMinutes < 0) elapsedMinutes += 24 * 60;
+    const start = new Date(`${mobileDayDate}T00:00:00`);
+    start.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
+    const elapsedMilliseconds = now.getTime() - start.getTime();
+    if (elapsedMilliseconds < 0) {
+      return {
+        label: `−${Math.ceil(Math.abs(elapsedMilliseconds) / 60000)}m`,
+        isFuture: true,
+      };
+    }
+    const elapsedMinutes = Math.floor(elapsedMilliseconds / 60000);
     const hours = Math.floor(elapsedMinutes / 60);
     const minutes = elapsedMinutes % 60;
-    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+    return {
+      label: hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`,
+      isFuture: false,
+    };
   })();
+  const mobileLiveElapsedLabel = mobileLiveTiming.label;
 
   const displayedTotalEarnings = selectedRecordIsInVisibleWeek
     ? selectedRecord.total_earnings
@@ -2441,6 +2507,7 @@ function App() {
     () => () => {
       window.clearTimeout(mobileSheetCloseTimerRef.current);
       window.clearTimeout(dailyLogFormCloseTimerRef.current);
+      window.clearTimeout(mobileQuestCelebrationTimerRef.current);
     },
     []
   );
@@ -2775,6 +2842,30 @@ function App() {
     closeMobileSheet("draft-edit", () => setMobileDraftEditTarget(null));
   }
 
+  function closeMobileDraftDetailsSheet() {
+    if (isSavingMobileDraftDetails) return;
+    closeMobileSheet("draft-details", () => setIsMobileDraftDetailsOpen(false));
+  }
+
+  function openMobileDraftDetails() {
+    if (!activeMobileShift) return;
+    setMobileDraftDetailsForm({
+      day_tags: activeMobileShift.day_tags || [],
+      notes: activeMobileShift.notes || "",
+    });
+    setMobileDraftDetailsError("");
+    setIsMobileDraftDetailsOpen(true);
+  }
+
+  function toggleMobileDraftTag(tagValue) {
+    setMobileDraftDetailsForm((current) => ({
+      ...current,
+      day_tags: current.day_tags.includes(tagValue)
+        ? current.day_tags.filter((tag) => tag !== tagValue)
+        : [...current.day_tags, tagValue],
+    }));
+  }
+
   function openQuickUpdate(record) {
     if (!record) return;
     setQuickUpdateForm({
@@ -2880,6 +2971,15 @@ function App() {
     )
       ? overrides.end_home_odometer
       : existingDraft?.end_home_odometer ?? null;
+    const tripEvents = Object.prototype.hasOwnProperty.call(overrides, "trip_events")
+      ? overrides.trip_events
+      : existingDraft?.trip_events ?? [];
+    const dayTags = Object.prototype.hasOwnProperty.call(overrides, "day_tags")
+      ? overrides.day_tags
+      : existingDraft?.day_tags ?? [];
+    const notes = Object.prototype.hasOwnProperty.call(overrides, "notes")
+      ? overrides.notes
+      : existingDraft?.notes ?? null;
     const response = await fetch(`${API_BASE_URL}/api/drafts/${date}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -2888,6 +2988,9 @@ function App() {
         sessions,
         home_end_time: homeEndTime,
         end_home_odometer: endHomeOdometer,
+        trip_events: tripEvents,
+        day_tags: dayTags,
+        notes,
       }),
     });
     if (!response.ok) {
@@ -2900,6 +3003,116 @@ function App() {
       ...current.filter((draft) => draft.date !== savedDraft.date),
     ]);
     return savedDraft;
+  }
+
+  async function addCompletedMobileTrip() {
+    if (
+      mobileTripSavingRef.current ||
+      !activeMobileShift ||
+      !isMobileSessionRunning ||
+      isMobileBreakRunning
+    ) {
+      return;
+    }
+
+    mobileTripSavingRef.current = true;
+    setIsSavingMobileTrip(true);
+    setError("");
+    try {
+      const questBeforeSave = mobileFeaturedQuestPreview;
+      const sessions = structuredClone(activeMobileShift.sessions);
+      const session = sessions.at(-1);
+      session.id = session.id || createMobileEventId("session");
+      const tripEvents = [
+        ...(activeMobileShift.trip_events || []),
+        {
+          id: createMobileEventId("trip"),
+          completed_at: new Date().toISOString(),
+          session_id: session.id,
+        },
+      ];
+      await persistMobileDraft(activeMobileShift.date, sessions, { trip_events: tripEvents });
+      if (questBeforeSave) {
+        const previousProgress = Number(questBeforeSave.progress_trips) || 0;
+        const nextProgress = previousProgress + 1;
+        let reachedTier = null;
+        if (
+          previousProgress < questBeforeSave.final_tier_trips &&
+          nextProgress >= questBeforeSave.final_tier_trips
+        ) {
+          reachedTier = "final";
+        } else if (
+          previousProgress < questBeforeSave.first_tier_trips &&
+          nextProgress >= questBeforeSave.first_tier_trips
+        ) {
+          reachedTier = "first";
+        }
+
+        if (reachedTier) {
+          window.clearTimeout(mobileQuestCelebrationTimerRef.current);
+          setMobileQuestCelebration({
+            questId: questBeforeSave.id,
+            tier: reachedTier,
+            bonus: reachedTier === "final"
+              ? questBeforeSave.total_possible_bonus
+              : questBeforeSave.first_tier_bonus,
+          });
+          mobileQuestCelebrationTimerRef.current = window.setTimeout(
+            () => setMobileQuestCelebration(null),
+            reachedTier === "final" ? 2000 : 1650
+          );
+        }
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      mobileTripSavingRef.current = false;
+      setIsSavingMobileTrip(false);
+    }
+  }
+
+  async function undoCompletedMobileTrip() {
+    if (
+      mobileTripSavingRef.current ||
+      !activeMobileShift ||
+      !(activeMobileShift.trip_events || []).length
+    ) {
+      return;
+    }
+
+    mobileTripSavingRef.current = true;
+    setIsSavingMobileTrip(true);
+    setError("");
+    try {
+      await persistMobileDraft(activeMobileShift.date, activeMobileShift.sessions, {
+        trip_events: activeMobileShift.trip_events.slice(0, -1),
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      mobileTripSavingRef.current = false;
+      setIsSavingMobileTrip(false);
+    }
+  }
+
+  async function saveMobileDraftDetails(event) {
+    event.preventDefault();
+    if (!activeMobileShift || isSavingMobileDraftDetails) return;
+
+    setIsSavingMobileDraftDetails(true);
+    setMobileDraftDetailsError("");
+    try {
+      await persistMobileDraft(activeMobileShift.date, activeMobileShift.sessions, {
+        day_tags: mobileDraftDetailsForm.day_tags,
+        notes: mobileDraftDetailsForm.notes.trim() || null,
+      });
+      closeMobileSheet("draft-details", () => setIsMobileDraftDetailsOpen(false));
+      setSuccessMessage("Shift details saved.");
+    } catch (err) {
+      setMobileDraftDetailsError(err.message);
+    } finally {
+      setIsSavingMobileDraftDetails(false);
+    }
   }
 
   async function handleDeleteMobileSession(sessionIndex) {
@@ -2926,12 +3139,21 @@ function App() {
     const remainingSessions = activeMobileShift.sessions.filter(
       (_, index) => index !== sessionIndex
     );
+    const removedSessionId = session.id;
+    const remainingTripEvents = (activeMobileShift.trip_events || []).filter(
+      (event) => event.session_id !== removedSessionId
+    );
+    const hasSavedDraftDetails = Boolean(
+      remainingTripEvents.length ||
+      (activeMobileShift.day_tags || []).length ||
+      activeMobileShift.notes
+    );
 
     setDeletingMobileSessionIndex(sessionIndex);
     setError("");
     setSuccessMessage("");
     try {
-      if (remainingSessions.length === 0) {
+      if (remainingSessions.length === 0 && !hasSavedDraftDetails) {
         const response = await fetch(
           `${API_BASE_URL}/api/drafts/${activeMobileShift.date}`,
           { method: "DELETE" }
@@ -2944,12 +3166,13 @@ function App() {
           current.filter((draft) => draft.date !== activeMobileShift.date)
         );
       } else {
-        await persistMobileDraft(activeMobileShift.date, remainingSessions);
+        await persistMobileDraft(activeMobileShift.date, remainingSessions, {
+          trip_events: remainingTripEvents,
+          home_end_time: null,
+          end_home_odometer: null,
+        });
       }
 
-      setSuccessMessage(
-        isActiveSession ? "Active session discarded." : "Session deleted."
-      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -3081,10 +3304,6 @@ function App() {
 
     const sessions = structuredClone(activeMobileShift?.sessions || []);
     const actionLabels = {
-      start_session: "Session started",
-      start_break: "Break started",
-      resume_session: "Break ended",
-      end_session: "Session ended",
       record_home: "Final return home recorded",
       edit_home: "Final return home updated",
     };
@@ -3096,6 +3315,7 @@ function App() {
         return;
       }
       sessions.push({
+        id: createMobileEventId("session"),
         start_time: timestamp,
         stop_time: null,
         start_odometer: odometer,
@@ -3144,7 +3364,9 @@ function App() {
     try {
       await persistMobileDraft(mobileDayDate, sessions, draftOverrides);
       closeMobileSheet("tracking", () => setMobileTrackingAction(null));
-      setSuccessMessage(`${actionLabels[mobileTrackingAction]} at ${timestamp}.`);
+      if (actionLabels[mobileTrackingAction]) {
+        setSuccessMessage(`${actionLabels[mobileTrackingAction]} at ${timestamp}.`);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -3185,6 +3407,9 @@ function App() {
       homeEndTimeValue: homeEnd.timeValue,
       homeEndTimeMeridiem: homeEnd.meridiem,
       endHomeOdometer: formNumber(draft?.end_home_odometer),
+      tripCount: draft?.trip_events?.length || 0,
+      dayTags: draft?.day_tags || [],
+      notes: draft?.notes || "",
     };
   }
 
@@ -3198,6 +3423,7 @@ function App() {
       handleEdit(mobileDayRecord);
       setFormData((current) => ({
         ...current,
+        trips: String(Number(current.trips || 0) + captured.tripCount),
         work_sessions: [
           ...(current.work_sessions.length === 1 &&
           Object.values(current.work_sessions[0]).every((value) => value === "" || value === "PM")
@@ -3215,11 +3441,16 @@ function App() {
           captured.endHomeOdometer !== ""
             ? captured.endHomeOdometer
             : current.end_home_odometer,
+        day_tags: [...new Set([...(current.day_tags || []), ...captured.dayTags])],
+        notes: captured.notes
+          ? [current.notes, captured.notes].filter(Boolean).join("\n\n")
+          : current.notes,
       }));
     } else {
       openAddFormForDate(mobileDayDate, false);
       setFormData((current) => ({
         ...current,
+        trips: captured.tripCount ? String(captured.tripCount) : current.trips,
         work_sessions: captured.workSessions.length
           ? captured.workSessions
           : [createEmptyWorkSession()],
@@ -3227,6 +3458,8 @@ function App() {
         home_end_time_value: captured.homeEndTimeValue,
         home_end_time_meridiem: captured.homeEndTimeMeridiem,
         end_home_odometer: captured.endHomeOdometer,
+        day_tags: captured.dayTags,
+        notes: captured.notes,
       }));
     }
     setShowAdvancedTracking(true);
@@ -3308,6 +3541,12 @@ function App() {
 
       day_tags:
         formData.day_tags && formData.day_tags.length > 0 ? formData.day_tags : null,
+      trip_events: draftBeingFinalizedDate
+        ? [
+            ...(dailyRecords.find((record) => record.date === editingDate)?.trip_events || []),
+            ...(mobileDrafts.find((draft) => draft.date === draftBeingFinalizedDate)?.trip_events || []),
+          ]
+        : undefined,
     };
 
     if (
@@ -3895,15 +4134,15 @@ function App() {
             )}
 
             {mobileDayDate === getTodayInputValue() && (
-              <article key={activeMobileShift?.status || "idle"} className={`mobile-live-tracker ${isMobileSessionRunning ? "active" : ""} ${isMobileBreakRunning ? "on-break" : ""}`}>
+              <article key={activeMobileShift?.status || "idle"} className={`mobile-live-tracker ${isMobileSessionRunning && !mobileLiveTiming.isFuture ? "active" : ""} ${isMobileBreakRunning ? "on-break" : ""} ${mobileLiveTiming.isFuture ? "scheduled" : ""}`}>
                 <div className="mobile-section-heading">
                   <div>
                     <span className="mobile-section-eyebrow">Live tracking</span>
-                    <h2>{isMobileBreakRunning ? "Break in progress" : isMobileSessionRunning ? `Session ${activeMobileShift.sessions.length} in progress` : activeMobileShift?.home_end_time ? "Return home recorded" : activeMobileShift ? "Ready to continue" : "Ready to work?"}</h2>
+                    <h2>{mobileLiveTiming.isFuture ? (isMobileBreakRunning ? "Break starts soon" : `Session ${activeMobileShift.sessions.length} starts soon`) : isMobileBreakRunning ? "Break in progress" : isMobileSessionRunning ? `Session ${activeMobileShift.sessions.length} in progress` : activeMobileShift?.home_end_time ? "Return home recorded" : activeMobileShift ? "Ready to continue" : "Ready to work?"}</h2>
                   </div>
                   {isMobileSessionRunning && (
-                    <span className={`mobile-live-dot ${isMobileBreakRunning ? "break" : ""}`}>
-                      {isMobileBreakRunning ? "Break" : "Live"}
+                    <span className={`mobile-live-dot ${isMobileBreakRunning ? "break" : ""} ${mobileLiveTiming.isFuture ? "scheduled" : ""}`}>
+                      {mobileLiveTiming.isFuture ? "Soon" : isMobileBreakRunning ? "Break" : "Live"}
                       {mobileLiveElapsedLabel ? ` · ${mobileLiveElapsedLabel}` : ""}
                     </span>
                   )}
@@ -3911,9 +4150,63 @@ function App() {
 
                 {activeMobileSession && isMobileSessionRunning && (
                   <p className="mobile-live-detail">
-                    Started at {activeMobileSession.start_time}
+                    {mobileLiveTiming.isFuture ? "Starts" : "Started"} at {activeMobileSession.start_time}
                     {isMobileBreakRunning ? ` · Break since ${activeMobileBreak.start_time}` : ""}
                   </p>
+                )}
+
+                {activeMobileShift?.sessions?.length > 0 && (
+                  <div className="mobile-trip-counter">
+                    <div className="mobile-trip-count-copy">
+                      <span className="mobile-trip-count-label">Completed trips ·</span>
+                      <strong><AnimatedNumber value={mobileDraftTripCount} format={(value) => String(Math.round(value))} /></strong>
+                      <small className={latestMobileTrip ? "has-trip" : ""}>
+                        {latestMobileTrip ? <><span>Latest ·</span><time>{formatCompletedTripTime(latestMobileTrip.completed_at)}</time></> : "Ready for your first trip"}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      className="mobile-trip-undo"
+                      onClick={undoCompletedMobileTrip}
+                      disabled={mobileDraftTripCount === 0}
+                      aria-busy={isSavingMobileTrip}
+                    >
+                      Undo last
+                    </button>
+                  </div>
+                )}
+
+                {isMobileSessionRunning && mobileFeaturedQuestPreview && (
+                  <div className={`mobile-live-quest ${mobileQuestCelebration?.questId === mobileFeaturedQuestPreview.id ? `celebrating celebrating-${mobileQuestCelebration.tier}` : ""}`}>
+                    <div className="mobile-live-quest-heading">
+                      <span>{mobileFeaturedQuestPreview.title}</span>
+                      <strong>{Math.min(mobileFeaturedQuestPreview.progress_trips, mobileFeaturedQuestPreview.final_tier_trips)} / {mobileFeaturedQuestPreview.final_tier_trips}</strong>
+                    </div>
+                    <QuestTierProgress quest={mobileFeaturedQuestPreview} className="mobile-progress-track" />
+                    {mobileQuestCelebration?.questId === mobileFeaturedQuestPreview.id && (
+                      <div className={`mobile-quest-celebration ${mobileQuestCelebration.tier}`} role="status" aria-live="polite">
+                        <div className="mobile-quest-confetti" aria-hidden="true">
+                          {QUEST_CONFETTI_PARTICLES
+                            .slice(0, mobileQuestCelebration.tier === "final" ? 16 : 11)
+                            .map(([x, y, rotation, delay], index) => (
+                              <span
+                                key={`${mobileQuestCelebration.tier}-${index}`}
+                                style={{
+                                  "--confetti-x": `${x}px`,
+                                  "--confetti-y": `${y}px`,
+                                  "--confetti-rotation": `${rotation}deg`,
+                                  "--confetti-delay": `${delay}ms`,
+                                }}
+                              ></span>
+                            ))}
+                        </div>
+                        <strong className="mobile-quest-celebration-copy">
+                          {mobileQuestCelebration.tier === "final" ? "Quest complete" : "First tier complete"}
+                          <small>${mobileQuestCelebration.bonus.toFixed(2)} earned</small>
+                        </strong>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {activeMobileShift?.sessions?.length > 0 && (
@@ -3971,7 +4264,7 @@ function App() {
                   </div>
                 )}
 
-                <span className="mobile-tracker-hint">Every timestamp is saved immediately. You can close the app between actions.</span>
+                {!isMobileSessionRunning && <span className="mobile-tracker-hint">Every timestamp is saved immediately. You can close the app between actions.</span>}
               </article>
             )}
 
@@ -3980,11 +4273,32 @@ function App() {
               <button type="button" onClick={() => handleEdit(mobileDayRecord)}>Edit full day</button>
             </div>}
 
-            {mobileFeaturedQuest && (
+            {activeMobileShift && !isMobileSessionRunning && (
+              <article className="mobile-draft-details-card">
+                <div className="mobile-draft-details-heading">
+                  <div><span>Shift details</span><strong>Context & note</strong></div>
+                  <button type="button" onClick={openMobileDraftDetails}>
+                    {(activeMobileShift.day_tags || []).length || activeMobileShift.notes ? "Edit" : "Add"}
+                  </button>
+                </div>
+                {(activeMobileShift.day_tags || []).length > 0 && (
+                  <div className="mobile-draft-tag-list">
+                    {activeMobileShift.day_tags.map((tag) => <DayTagChip tagValue={tag} key={tag} />)}
+                  </div>
+                )}
+                {activeMobileShift.notes ? (
+                  <p>{activeMobileShift.notes}</p>
+                ) : (
+                  <small>Save how the shift felt without entering earnings.</small>
+                )}
+              </article>
+            )}
+
+            {mobileFeaturedQuestPreview && !isMobileSessionRunning && (
               <article className="mobile-context-card">
-                <div><span>Active quest</span><strong>{mobileFeaturedQuest.title}</strong></div>
-                <strong>{Math.min(mobileFeaturedQuest.progress_trips, mobileFeaturedQuest.final_tier_trips)} / {mobileFeaturedQuest.final_tier_trips}</strong>
-                <QuestTierProgress quest={mobileFeaturedQuest} className="mobile-progress-track" />
+                <div><span>Active quest{mobileDraftTripCount ? " · Live progress" : ""}</span><strong>{mobileFeaturedQuestPreview.title}</strong></div>
+                <strong>{Math.min(mobileFeaturedQuestPreview.progress_trips, mobileFeaturedQuestPreview.final_tier_trips)} / {mobileFeaturedQuestPreview.final_tier_trips}</strong>
+                <QuestTierProgress quest={mobileFeaturedQuestPreview} className="mobile-progress-track" />
               </article>
             )}
 
@@ -4005,6 +4319,16 @@ function App() {
             {mobileDayDate === getTodayInputValue() && <div className="mobile-today-action-dock">
               <div>
                 {isMobileSessionRunning && !isMobileBreakRunning ? <>
+                  <button
+                    type="button"
+                    className="mobile-trip-dock-button"
+                    onClick={addCompletedMobileTrip}
+                    disabled={mobileLiveTiming.isFuture}
+                    aria-busy={isSavingMobileTrip}
+                    aria-label="Add one completed trip"
+                  >
+                    +1 Trip
+                  </button>
                   <button type="button" className="mobile-break-button" onClick={() => openMobileTrackingAction("start_break")}>Start break</button>
                   <button type="button" className="mobile-end-button" onClick={() => openMobileTrackingAction("end_session")}>End session</button>
                 </> : isMobileBreakRunning ? <>
@@ -4051,14 +4375,16 @@ function App() {
               })}
             </div>
 
-            <div className="mobile-earnings-stats mobile-selection-content">
-              <div><span>Online</span><strong>{formatHoursAndMinutes(displayedOnlineHours)}</strong></div>
-              <div><span>Real work</span><strong>{displayedRealWorkHours !== null ? formatHoursAndMinutes(displayedRealWorkHours) : "—"}</strong></div>
-              <div><span>Trips</span><strong><AnimatedNumber value={displayedTrips} format={(value) => String(Math.round(value))} flash={false} /></strong></div>
-              <div><span>Work miles</span><strong>{displayedWorkMiles !== null ? <AnimatedNumber value={displayedWorkMiles} format={(value) => value.toFixed(1)} flash={false} /> : "—"}</strong></div>
-              <div><span>Online $/hr</span><strong><AnimatedNumber value={displayedAverageHourly} format={(value) => `$${value.toFixed(2)}`} flash={false} /></strong></div>
-              <div><span>Real $/hr</span><strong>{displayedEarningsPerRealHour !== null ? <AnimatedNumber value={displayedEarningsPerRealHour} format={(value) => `$${value.toFixed(2)}`} flash={false} /> : "—"}</strong></div>
-            </div>
+            {!isSelectedDayMode && (
+              <div className="mobile-earnings-stats mobile-selection-content">
+                <div><span>Online</span><strong>{formatHoursAndMinutes(displayedOnlineHours)}</strong></div>
+                <div><span>Real work</span><strong>{displayedRealWorkHours !== null ? formatHoursAndMinutes(displayedRealWorkHours) : "—"}</strong></div>
+                <div><span>Trips</span><strong><AnimatedNumber value={displayedTrips} format={(value) => String(Math.round(value))} flash={false} /></strong></div>
+                <div><span>Work miles</span><strong>{displayedWorkMiles !== null ? <AnimatedNumber value={displayedWorkMiles} format={(value) => value.toFixed(1)} flash={false} /> : "—"}</strong></div>
+                <div><span>Online $/hr</span><strong><AnimatedNumber value={displayedAverageHourly} format={(value) => `$${value.toFixed(2)}`} flash={false} /></strong></div>
+                <div><span>Real $/hr</span><strong>{displayedEarningsPerRealHour !== null ? <AnimatedNumber value={displayedEarningsPerRealHour} format={(value) => `$${value.toFixed(2)}`} flash={false} /> : "—"}</strong></div>
+              </div>
+            )}
 
 
             {isSelectedDayMode && selectedRecord && (
@@ -4067,7 +4393,7 @@ function App() {
                 key={`snapshot-${selectedRecord.date}`}
               >
                 <header>
-                  <div><span>Selected day</span><h2>Day details</h2></div>
+                  <div><span>Selected day</span><h2>At a glance</h2></div>
                   <button type="button" onClick={() => handleEdit(selectedRecord)}>Edit day</button>
                 </header>
                 <div className="mobile-day-snapshot-group">
@@ -4076,6 +4402,15 @@ function App() {
                     {getMobilePerformanceLabels(selectedRecord).map((label) => (
                       <LabelChip key={label} label={label} record={selectedRecord} />
                     ))}
+                  </div>
+                </div>
+                <div className="mobile-day-snapshot-group mobile-day-snapshot-efficiency">
+                  <span className="mobile-day-snapshot-group-label">Efficiency</span>
+                  <div className="mobile-day-efficiency-grid">
+                    <div><span>Online $/hr</span><strong>${selectedRecord.avg_hourly.toFixed(2)}</strong></div>
+                    <div><span>Real $/hr</span><strong>{selectedRecord.earnings_per_real_work_hour !== null ? `$${selectedRecord.earnings_per_real_work_hour.toFixed(2)}` : "—"}</strong></div>
+                    <div><span>$/work mile</span><strong>{selectedRecord.earnings_per_work_mile !== null ? `$${selectedRecord.earnings_per_work_mile.toFixed(2)}` : "—"}</strong></div>
+                    <div><span>Miles/trip</span><strong>{selectedRecord.miles_per_trip !== null ? selectedRecord.miles_per_trip.toFixed(1) : "—"}</strong></div>
                   </div>
                 </div>
                 {(selectedRecord.day_tags || []).length > 0 && (
@@ -4090,13 +4425,6 @@ function App() {
               </section>
             )}
 
-            {weeklyRecapQuest && (
-              <article className="mobile-context-card mobile-week-quest">
-                <div><span>Quest</span><strong>{weeklyRecapQuest.title}</strong></div>
-                <strong>{weeklyRecapQuest.status}</strong>
-              </article>
-            )}
-
             <div className="mobile-week-detail-sections mobile-selection-content" key={`details-${selectedRecordDate || selectedWeekStart}`}>
                 <section>
                   <h2>Earnings breakdown</h2>
@@ -4108,13 +4436,16 @@ function App() {
                 </section>
                 {isSelectedDayMode && selectedRecord && <>
                   <section>
-                    <h2>Time & mileage</h2>
+                    <h2>Activity totals</h2>
+                    <div><span>Trips</span><strong>{selectedRecord.trips}</strong></div>
+                    <div title="Individual completion times retained for future trip analytics">
+                      <span>Recorded timestamps</span>
+                      <strong>{selectedRecord.trip_events?.length || 0} of {selectedRecord.trips}</strong>
+                    </div>
                     <div><span>Online time</span><strong>{formatHoursAndMinutes(selectedRecord.online_hours)}</strong></div>
                     <div><span>Real work</span><strong>{selectedRecord.real_work_hours !== null ? formatHoursAndMinutes(selectedRecord.real_work_hours) : "Not tracked"}</strong></div>
                     <div><span>Break time</span><strong>{selectedRecord.break_hours ? formatHoursAndMinutes(selectedRecord.break_hours) : "None"}</strong></div>
                     <div><span>Work miles</span><strong>{selectedRecord.work_miles !== null ? selectedRecord.work_miles.toFixed(1) : "Not tracked"}</strong></div>
-                    <div><span>$/work mile</span><strong>{selectedRecord.earnings_per_work_mile !== null ? `$${selectedRecord.earnings_per_work_mile.toFixed(2)}` : "—"}</strong></div>
-                    <div><span>Miles/trip</span><strong>{selectedRecord.miles_per_trip !== null ? selectedRecord.miles_per_trip.toFixed(1) : "—"}</strong></div>
                   </section>
                   {(selectedRecord.work_sessions || []).length > 0 && <section>
                     <h2>Sessions & breaks</h2>
@@ -6064,6 +6395,7 @@ function App() {
               <button type="button" onClick={closeMobileTrackingSheet} aria-label="Close live tracking">×</button>
             </div>
             {mobileTrackingAction === "end_session" && isMobileBreakRunning && <p className="mobile-tracking-notice">The active break will end at the same time as this session.</p>}
+            {mobileTrackingAction === "record_home" && <p className="mobile-tracking-notice mobile-current-time-notice">The current time was filled in automatically. Adjust it only if you arrived earlier.</p>}
             <div className="mobile-tracking-fields">
               <label>
                 Time
@@ -6080,6 +6412,59 @@ function App() {
             <div className="mobile-sheet-actions">
               <button type="button" onClick={closeMobileTrackingSheet} disabled={isSavingMobileTracking}>Cancel</button>
               <button type="submit" className="primary-button" disabled={isSavingMobileTracking}>{isSavingMobileTracking ? "Saving…" : "Confirm"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {isMobileDraftDetailsOpen && activeMobileShift && (
+        <div
+          className={`mobile-sheet-overlay ${closingMobileSheet === "draft-details" ? "mobile-sheet-closing" : ""}`}
+          onClick={closeMobileDraftDetailsSheet}
+        >
+          <form className="mobile-quick-sheet mobile-draft-details-sheet" onSubmit={saveMobileDraftDetails} onClick={(event) => event.stopPropagation()}>
+            <div className="mobile-sheet-handle"></div>
+            <div className="mobile-sheet-heading">
+              <div><span>Saved before earnings</span><h2>Shift details</h2></div>
+              <button type="button" onClick={closeMobileDraftDetailsSheet} aria-label="Close shift details">×</button>
+            </div>
+            <p className="mobile-draft-details-intro">Add context while the shift is fresh. You can enter fare and tips later.</p>
+            {mobileDraftDetailsError && <p className="mobile-sheet-error" role="alert">{mobileDraftDetailsError}</p>}
+            <div className="mobile-draft-tag-picker">
+              {DAY_TAG_GROUPS.map((group) => (
+                <div className="day-tag-group" key={group.group}>
+                  <span className="day-tag-group-label"><DayTagIcon category={group.category} />{group.group}</span>
+                  <div className="day-tag-chip-row">
+                    {group.tags.map((tag) => {
+                      const isSelected = mobileDraftDetailsForm.day_tags.includes(tag.value);
+                      return (
+                        <button
+                          type="button"
+                          key={tag.value}
+                          className={`day-tag-toggle day-tag-toggle-${group.category} ${isSelected ? "day-tag-toggle-active" : ""}`}
+                          onClick={() => toggleMobileDraftTag(tag.value)}
+                          aria-pressed={isSelected}
+                        >
+                          <DayTagIcon category={group.category} />{tag.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <label className="mobile-draft-note-field">
+              Optional note
+              <textarea
+                value={mobileDraftDetailsForm.notes}
+                onChange={(event) => setMobileDraftDetailsForm((current) => ({ ...current, notes: event.target.value }))}
+                placeholder="How did the orders, traffic, or demand feel?"
+                rows="4"
+              />
+            </label>
+            <div className="mobile-sheet-actions">
+              <button type="button" onClick={closeMobileDraftDetailsSheet} disabled={isSavingMobileDraftDetails}>Cancel</button>
+              <button type="submit" className="primary-button" disabled={isSavingMobileDraftDetails}>{isSavingMobileDraftDetails ? "Saving…" : "Save details"}</button>
             </div>
           </form>
         </div>

@@ -1,6 +1,8 @@
 @echo off
 setlocal
 
+cd /d "%~dp0"
+
 REM ============================================================
 REM Uber Nest Tracker - Startup Script
 REM
@@ -15,11 +17,11 @@ REM ============================================================
 echo Starting Uber Nest Tracker...
 echo.
 
-REM Start the backend in its own window: activate the venv, then run uvicorn.
-start "Uber Nest Tracker - Backend" cmd /k "cd backend && call venv\Scripts\activate && uvicorn main:app --reload"
+REM Run Uvicorn through the project Python so moving the folder remains safe.
+start "Uber Nest Tracker - Backend" cmd /k "cd /d ""%~dp0backend"" && venv\Scripts\python.exe -m uvicorn main:app --reload"
 
 REM Start the frontend in its own window.
-start "Uber Nest Tracker - Frontend" cmd /k "cd frontend && npm run dev"
+start "Uber Nest Tracker - Frontend" cmd /k "cd /d ""%~dp0frontend"" && npm run dev"
 
 echo Both servers are starting in separate windows.
 echo Waiting a few seconds before opening your browser...

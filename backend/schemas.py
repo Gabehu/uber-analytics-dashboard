@@ -142,6 +142,7 @@ class DraftBreak(BaseModel):
 
 
 class DraftWorkSession(BaseModel):
+    id: str | None = None
     start_time: str
     stop_time: str | None = None
     start_odometer: float | None = None
@@ -149,11 +150,20 @@ class DraftWorkSession(BaseModel):
     breaks: list[DraftBreak] = Field(default_factory=list)
 
 
+class DraftTripEvent(BaseModel):
+    id: str
+    completed_at: str
+    session_id: str
+
+
 class DailyDraftUpsert(BaseModel):
     date: str
     sessions: list[DraftWorkSession] = Field(default_factory=list)
     home_end_time: str | None = None
     end_home_odometer: float | None = None
+    trip_events: list[DraftTripEvent] = Field(default_factory=list)
+    day_tags: list[str] = Field(default_factory=list)
+    notes: str | None = None
 
 
 class DailyDraft(DailyDraftUpsert):
@@ -191,6 +201,7 @@ class DailyRecordCreate(BaseModel):
     # freeform text, so it stays filterable rather than turning into a
     # second notes field.
     day_tags: list[str] | None = None
+    trip_events: list[DraftTripEvent] | None = None
 
 
 class DailyRecord(BaseModel):
@@ -249,3 +260,4 @@ class DailyRecord(BaseModel):
     notes: str | None = None
 
     day_tags: list[str] | None = None
+    trip_events: list[DraftTripEvent] = Field(default_factory=list)

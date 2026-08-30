@@ -1,7 +1,8 @@
 import json
 import re
 import sqlite3
-from datetime import date as date_cls
+import uuid
+from datetime import date as date_cls, datetime
 from pathlib import Path
 
 DATABASE_PATH = Path(__file__).parent / "uber_dashboard.db"
@@ -152,6 +153,41 @@ def _work_sessions_from_storage(stored_value):
     if not stored_value:
         return None
     return json.loads(stored_value)
+
+
+def _normalize_trip_events(events):
+    """Validate completed-trip events for draft and permanent storage."""
+    normalized = []
+    seen_ids = set()
+    for event in events or []:
+        event_id = _break_value(event, "id")
+        completed_at = _break_value(event, "completed_at")
+        session_id = _break_value(event, "session_id")
+        if not event_id or event_id in seen_ids:
+            raise ValueError("Completed-trip IDs must be present and unique.")
+        try:
+            datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            raise ValueError("Completed trips need a valid timestamp.")
+        if not session_id:
+            raise ValueError("Each completed trip must belong to a saved work session.")
+        seen_ids.add(event_id)
+        normalized.append({
+            "id": event_id,
+            "completed_at": completed_at,
+            "session_id": session_id,
+        })
+    return normalized
+
+
+def _trip_events_to_storage(events):
+    return json.dumps(_normalize_trip_events(events), separators=(",", ":"))
+
+
+def _trip_events_from_storage(stored_value):
+    if not stored_value:
+        return []
+    return _normalize_trip_events(json.loads(stored_value))
 
 
 def _all_work_sessions(record):
@@ -704,7 +740,8 @@ def initialize_database():
             wallet_balance REAL,
             notes TEXT,
 
-            day_tags TEXT
+            day_tags TEXT,
+            trip_events_json TEXT NOT NULL DEFAULT '[]'
         )
         """
     )
@@ -754,6 +791,9 @@ def initialize_database():
             sessions_json TEXT NOT NULL DEFAULT '[]',
             home_end_time TEXT,
             end_home_odometer REAL,
+            trip_events_json TEXT NOT NULL DEFAULT '[]',
+            day_tags TEXT,
+            notes TEXT,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -762,6 +802,9 @@ def initialize_database():
     for column_definition in (
         "home_end_time TEXT",
         "end_home_odometer REAL",
+        "trip_events_json TEXT NOT NULL DEFAULT '[]'",
+        "day_tags TEXT",
+        "notes TEXT",
     ):
         try:
             cursor.execute(f"ALTER TABLE daily_drafts ADD COLUMN {column_definition}")
@@ -775,6 +818,13 @@ def initialize_database():
     # above, which already includes it).
     try:
         cursor.execute("ALTER TABLE daily_logs ADD COLUMN day_tags TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute(
+            "ALTER TABLE daily_logs ADD COLUMN trip_events_json TEXT NOT NULL DEFAULT '[]'"
+        )
     except sqlite3.OperationalError:
         pass
 
@@ -1103,7 +1153,8 @@ def get_daily_data():
             wallet_balance,
             notes,
 
-            day_tags
+            day_tags,
+            trip_events_json
         FROM daily_logs
         ORDER BY date DESC
         """
@@ -1116,6 +1167,9 @@ def get_daily_data():
 
     for row in daily_rows:
         row["day_tags"] = _day_tags_from_storage(row.get("day_tags"))
+        row["trip_events"] = _trip_events_from_storage(
+            row.pop("trip_events_json", None)
+        )
         row["breaks"] = _breaks_from_storage(row.pop("breaks_json", None))
         sessions = []
         if (
@@ -1365,6 +1419,7 @@ def _draft_value(item, key, default=None):
 def _draft_sessions_to_dicts(sessions):
     return [
         {
+            "id": _draft_value(session, "id") or str(uuid.uuid4()),
             "start_time": _draft_value(session, "start_time"),
             "stop_time": _draft_value(session, "stop_time"),
             "start_odometer": _draft_value(session, "start_odometer"),
@@ -1404,6 +1459,9 @@ def validate_daily_draft(draft):
         raise ValueError("Draft date must use YYYY-MM-DD format.")
 
     sessions = _draft_sessions_to_dicts(draft.sessions)
+    session_ids = [session["id"] for session in sessions]
+    if len(session_ids) != len(set(session_ids)):
+        raise ValueError("Draft session IDs must be unique.")
     previous_stop = None
     previous_stop_odometer = None
     for session_index, session in enumerate(sessions):
@@ -1493,14 +1551,26 @@ def validate_daily_draft(draft):
             and draft.end_home_odometer < final_stop_odometer
         ):
             raise ValueError("Final return home odometer cannot be lower than the last session stop.")
-    return sessions
+
+    trip_events = _normalize_trip_events(draft.trip_events)
+    if any(event["session_id"] not in session_ids for event in trip_events):
+        raise ValueError("Each completed trip must belong to a saved work session.")
+
+    day_tags = list(dict.fromkeys(draft.day_tags or []))
+    invalid_tags = sorted(set(day_tags) - ALLOWED_DAY_TAGS)
+    if invalid_tags:
+        raise ValueError(f"Unknown day effect: {', '.join(invalid_tags)}")
+
+    notes = draft.notes.strip() if draft.notes else None
+    return sessions, trip_events, day_tags, notes
 
 
 def get_daily_drafts():
     conn = get_connection()
     rows = conn.execute(
         """
-        SELECT date, sessions_json, home_end_time, end_home_odometer, updated_at
+        SELECT date, sessions_json, home_end_time, end_home_odometer,
+               trip_events_json, day_tags, notes, updated_at
         FROM daily_drafts
         ORDER BY date DESC
         """
@@ -1508,12 +1578,15 @@ def get_daily_drafts():
     conn.close()
     drafts = []
     for row in rows:
-        sessions = json.loads(row["sessions_json"] or "[]")
+        sessions = _draft_sessions_to_dicts(json.loads(row["sessions_json"] or "[]"))
         drafts.append({
             "date": row["date"],
             "sessions": sessions,
             "home_end_time": row["home_end_time"],
             "end_home_odometer": row["end_home_odometer"],
+            "trip_events": json.loads(row["trip_events_json"] or "[]"),
+            "day_tags": _day_tags_from_storage(row["day_tags"]) or [],
+            "notes": row["notes"],
             "status": _draft_status(sessions, row["home_end_time"]),
             "updated_at": row["updated_at"],
         })
@@ -1521,18 +1594,22 @@ def get_daily_drafts():
 
 
 def upsert_daily_draft(draft):
-    sessions = validate_daily_draft(draft)
+    sessions, trip_events, day_tags, notes = validate_daily_draft(draft)
     conn = get_connection()
     conn.execute(
         """
         INSERT INTO daily_drafts (
-            date, sessions_json, home_end_time, end_home_odometer, updated_at
+            date, sessions_json, home_end_time, end_home_odometer,
+            trip_events_json, day_tags, notes, updated_at
         )
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(date) DO UPDATE SET
             sessions_json = excluded.sessions_json,
             home_end_time = excluded.home_end_time,
             end_home_odometer = excluded.end_home_odometer,
+            trip_events_json = excluded.trip_events_json,
+            day_tags = excluded.day_tags,
+            notes = excluded.notes,
             updated_at = CURRENT_TIMESTAMP
         """,
         (
@@ -1540,12 +1617,16 @@ def upsert_daily_draft(draft):
             json.dumps(sessions, separators=(",", ":")),
             draft.home_end_time,
             draft.end_home_odometer,
+            json.dumps(trip_events, separators=(",", ":")),
+            _day_tags_to_storage(day_tags),
+            notes,
         ),
     )
     conn.commit()
     row = conn.execute(
         """
-        SELECT date, sessions_json, home_end_time, end_home_odometer, updated_at
+        SELECT date, sessions_json, home_end_time, end_home_odometer,
+               trip_events_json, day_tags, notes, updated_at
         FROM daily_drafts
         WHERE date = ?
         """,
@@ -1558,6 +1639,9 @@ def upsert_daily_draft(draft):
         "sessions": stored_sessions,
         "home_end_time": row["home_end_time"],
         "end_home_odometer": row["end_home_odometer"],
+        "trip_events": json.loads(row["trip_events_json"] or "[]"),
+        "day_tags": _day_tags_from_storage(row["day_tags"]) or [],
+        "notes": row["notes"],
         "status": _draft_status(stored_sessions, row["home_end_time"]),
         "updated_at": row["updated_at"],
     }
@@ -1619,6 +1703,7 @@ def delete_quest(quest_id):
 def create_daily_record(record):
     validate_daily_record(record)
     metrics = calculate_daily_metrics(record)
+    trip_events = _normalize_trip_events(getattr(record, "trip_events", None))
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -1738,6 +1823,11 @@ def create_daily_record(record):
         ),
     )
 
+    cursor.execute(
+        "UPDATE daily_logs SET trip_events_json = ? WHERE date = ?",
+        (_trip_events_to_storage(trip_events), record.date),
+    )
+
     conn.commit()
     conn.close()
 
@@ -1795,6 +1885,7 @@ def create_daily_record(record):
         "notes": record.notes,
 
         "day_tags": record.day_tags,
+        "trip_events": trip_events,
     }
 
 
@@ -1809,7 +1900,10 @@ def update_daily_record(date: str, record):
     # Resolve the source row first and update by its stable primary key. This
     # lets the unique date change in place without deleting/recreating the
     # record, so its ID remains unchanged.
-    cursor.execute("SELECT id FROM daily_logs WHERE date = ?", (date,))
+    cursor.execute(
+        "SELECT id, trip_events_json FROM daily_logs WHERE date = ?",
+        (date,),
+    )
     source_row = cursor.fetchone()
     if source_row is None:
         conn.close()
@@ -1820,6 +1914,12 @@ def update_daily_record(date: str, record):
         if cursor.fetchone() is not None:
             conn.close()
             raise DailyDateConflictError(target_date)
+
+    trip_events = (
+        _normalize_trip_events(record.trip_events)
+        if getattr(record, "trip_events", None) is not None
+        else _trip_events_from_storage(source_row["trip_events_json"])
+    )
 
     try:
         cursor.execute(
@@ -1943,6 +2043,11 @@ def update_daily_record(date: str, record):
 
     updated_count = cursor.rowcount
 
+    cursor.execute(
+        "UPDATE daily_logs SET trip_events_json = ? WHERE id = ?",
+        (_trip_events_to_storage(trip_events), source_row["id"]),
+    )
+
     conn.commit()
     conn.close()
 
@@ -2003,6 +2108,7 @@ def update_daily_record(date: str, record):
         "notes": record.notes,
 
         "day_tags": record.day_tags,
+        "trip_events": trip_events,
     }
 
 
@@ -2070,7 +2176,7 @@ CSV_COLUMNS = [
     "fare_share", "tip_share", "promo_share",
     "hourly_label", "promo_label", "tip_label", "mileage_label",
     "wallet_balance", "notes",
-    "day_tags",
+    "day_tags", "trip_events",
     "quest_start_date", "quest_end_date",
     "quest_first_tier_trips", "quest_first_tier_bonus",
     "quest_final_tier_trips", "quest_final_additional_bonus",
@@ -2107,6 +2213,9 @@ def get_daily_csv():
         row_for_csv = dict(row)
         row_for_csv["record_type"] = "daily"
         row_for_csv["day_tags"] = _day_tags_to_storage(row.get("day_tags"))
+        row_for_csv["trip_events"] = _trip_events_to_storage(
+            row.get("trip_events")
+        )
         row_for_csv["breaks"] = _breaks_to_storage(row.get("breaks"))
         work_sessions = row.get("work_sessions") or []
         row_for_csv["additional_sessions"] = _work_sessions_to_storage(
@@ -2421,6 +2530,15 @@ def _import_work_sessions(value):
     return parsed or None
 
 
+def _import_trip_events(value):
+    if value is None or str(value).strip() == "":
+        return None
+    parsed = json.loads(str(value))
+    if not isinstance(parsed, list):
+        raise ValueError("trip_events must be a JSON list")
+    return _normalize_trip_events(parsed)
+
+
 class ImportRecord:
     """
     Stand-in for DailyRecordCreate, built from one CSV row. Exposes the same
@@ -2454,6 +2572,7 @@ class ImportRecord:
         self.notes = _import_optional_text(row.get("notes"))
 
         self.day_tags = _import_day_tags(row.get("day_tags"))
+        self.trip_events = _import_trip_events(row.get("trip_events"))
 
 
 class ImportQuest:
