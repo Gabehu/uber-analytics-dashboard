@@ -4528,13 +4528,80 @@ th {
     margin-top: 14px;
   }
 
-  .mobile-session-timeline > div {
+  .mobile-session-timeline-entry {
     display: grid;
     min-width: 0;
     grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
     gap: 3px 10px;
     border-top: 1px solid var(--border);
     padding-top: 9px;
+  }
+
+  .mobile-session-history {
+    min-width: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .mobile-session-history > summary {
+    display: flex;
+    min-height: 38px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 20px 7px 2px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    list-style: none;
+    position: relative;
+  }
+
+  .mobile-session-history > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .mobile-session-history > summary::after {
+    position: absolute;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid var(--text-muted);
+    border-bottom: 1.5px solid var(--text-muted);
+    content: "";
+    transform: rotate(45deg);
+    transition: transform 160ms ease, border-color 160ms ease;
+  }
+
+  .mobile-session-history[open] > summary::after {
+    transform: rotate(225deg);
+  }
+
+  .mobile-session-history > summary:hover::after,
+  .mobile-session-history > summary:focus-visible::after {
+    border-color: var(--text-secondary);
+  }
+
+  .mobile-session-history > summary span {
+    color: var(--text-secondary);
+    font-weight: 650;
+  }
+
+  .mobile-session-history > summary small {
+    grid-column: auto;
+    text-align: right;
+  }
+
+  .mobile-session-history-body {
+    display: grid;
+    gap: 8px;
+    padding-bottom: 3px;
+  }
+
+  .mobile-session-history-body .mobile-session-timeline-entry:first-child {
+    border-top-color: rgba(127, 139, 160, 0.14);
+  }
+
+  .mobile-shift-history {
+    margin-top: 1px;
   }
 
   .mobile-session-timeline span,
@@ -4889,6 +4956,17 @@ th {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  .mobile-live-quest-heading > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-live-quest-heading > strong {
+    flex: 0 0 auto;
   }
 
   .mobile-live-quest span {
@@ -5588,6 +5666,32 @@ th {
   .mobile-more-row b {
     color: var(--text-muted);
     font-size: 24px;
+  }
+
+  .mobile-sound-setting {
+    margin-top: 8px;
+  }
+
+  .mobile-setting-toggle {
+    min-width: 54px;
+    min-height: 34px;
+    border-color: var(--border-strong);
+    border-radius: 999px;
+    padding: 5px 12px;
+    background: var(--bg-surface-2);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 750;
+  }
+
+  .mobile-setting-toggle[aria-pressed="true"] {
+    border-color: rgba(59, 167, 118, 0.52);
+    background: var(--success-bg);
+    color: var(--success-text);
+  }
+
+  .mobile-sound-setting > div:first-child {
+    align-items: flex-start;
   }
 
   .mobile-app-info {

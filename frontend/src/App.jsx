@@ -1229,6 +1229,14 @@ function App() {
   });
   const [isSavingMobileTrip, setIsSavingMobileTrip] = useState(false);
   const mobileTripSavingRef = useRef(false);
+  const [mobileSoundEffectsEnabled, setMobileSoundEffectsEnabled] = useState(() => {
+    try {
+      return window.localStorage.getItem("uber-mobile-sound-effects") !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const mobileAudioContextRef = useRef(null);
   const [mobileQuestCelebration, setMobileQuestCelebration] = useState(null);
   const mobileQuestCelebrationTimerRef = useRef(null);
   const [isMobileDraftDetailsOpen, setIsMobileDraftDetailsOpen] = useState(false);
@@ -1787,6 +1795,28 @@ function App() {
           }, 0),
       }
     : null;
+  const mobileQuestTierProgress = (() => {
+    if (!mobileFeaturedQuestPreview) return null;
+
+    const progress = Math.max(0, Number(mobileFeaturedQuestPreview.progress_trips) || 0);
+    const firstTarget = Math.max(0, Number(mobileFeaturedQuestPreview.first_tier_trips) || 0);
+    const finalTarget = Math.max(firstTarget, Number(mobileFeaturedQuestPreview.final_tier_trips) || 0);
+    const finalTierTarget = Math.max(finalTarget - firstTarget, 0);
+
+    if (progress >= firstTarget && finalTierTarget > 0) {
+      return {
+        label: progress >= finalTarget ? "Quest complete" : "Final tier",
+        progress: Math.min(Math.max(progress - firstTarget, 0), finalTierTarget),
+        target: finalTierTarget,
+      };
+    }
+
+    return {
+      label: "First tier",
+      progress: Math.min(progress, firstTarget),
+      target: firstTarget,
+    };
+  })();
   const mobileLiveTiming = (() => {
     if (!mobileLiveStartedAt) return { label: null, isFuture: false };
     const parts = splitStoredTime(mobileLiveStartedAt);
@@ -2508,6 +2538,7 @@ function App() {
       window.clearTimeout(mobileSheetCloseTimerRef.current);
       window.clearTimeout(dailyLogFormCloseTimerRef.current);
       window.clearTimeout(mobileQuestCelebrationTimerRef.current);
+      mobileAudioContextRef.current?.close();
     },
     []
   );
@@ -3005,6 +3036,64 @@ function App() {
     return savedDraft;
   }
 
+  function prepareMobileAudio() {
+    if (!mobileSoundEffectsEnabled) return null;
+
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return null;
+
+    if (!mobileAudioContextRef.current || mobileAudioContextRef.current.state === "closed") {
+      mobileAudioContextRef.current = new AudioContext();
+    }
+    if (mobileAudioContextRef.current.state === "suspended") {
+      mobileAudioContextRef.current.resume().catch(() => {});
+    }
+    return mobileAudioContextRef.current;
+  }
+
+  function playMobileConfirmationSound(kind = "trip") {
+    const audioContext = prepareMobileAudio();
+    if (!audioContext) return;
+
+    const sounds = {
+      trip: [[720, 0, 0.085, 0.045]],
+      first: [[523, 0, 0.12, 0.05], [659, 0.09, 0.14, 0.055], [784, 0.19, 0.22, 0.06]],
+      final: [
+        [392, 0, 0.16, 0.052],
+        [523, 0.075, 0.16, 0.056],
+        [659, 0.15, 0.18, 0.06],
+        [784, 0.235, 0.24, 0.065],
+        [1047, 0.34, 0.38, 0.07],
+      ],
+    };
+    const startAt = audioContext.currentTime + 0.015;
+
+    (sounds[kind] || sounds.trip).forEach(([frequency, delay, duration, volume]) => {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const noteStart = startAt + delay;
+      oscillator.type = kind === "trip" ? "sine" : "triangle";
+      oscillator.frequency.setValueAtTime(frequency, noteStart);
+      gain.gain.setValueAtTime(0.0001, noteStart);
+      gain.gain.exponentialRampToValueAtTime(volume, noteStart + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, noteStart + duration);
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(noteStart);
+      oscillator.stop(noteStart + duration + 0.02);
+    });
+  }
+
+  function toggleMobileSoundEffects() {
+    const nextValue = !mobileSoundEffectsEnabled;
+    setMobileSoundEffectsEnabled(nextValue);
+    try {
+      window.localStorage.setItem("uber-mobile-sound-effects", String(nextValue));
+    } catch {
+      // The preference still works for this visit if storage is unavailable.
+    }
+  }
+
   async function addCompletedMobileTrip() {
     if (
       mobileTripSavingRef.current ||
@@ -3016,6 +3105,7 @@ function App() {
     }
 
     mobileTripSavingRef.current = true;
+    prepareMobileAudio();
     setIsSavingMobileTrip(true);
     setError("");
     try {
@@ -3032,10 +3122,10 @@ function App() {
         },
       ];
       await persistMobileDraft(activeMobileShift.date, sessions, { trip_events: tripEvents });
+      let reachedTier = null;
       if (questBeforeSave) {
         const previousProgress = Number(questBeforeSave.progress_trips) || 0;
         const nextProgress = previousProgress + 1;
-        let reachedTier = null;
         if (
           previousProgress < questBeforeSave.final_tier_trips &&
           nextProgress >= questBeforeSave.final_tier_trips
@@ -3063,6 +3153,7 @@ function App() {
           );
         }
       }
+      playMobileConfirmationSound(reachedTier || "trip");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -4081,6 +4172,65 @@ function App() {
     }
   }
 
+  function renderMobileSessionTimelineEntry(session, index) {
+    return (
+      <div className="mobile-session-timeline-entry" key={`${session.start_time}-${index}`}>
+        <span>Session {index + 1}</span>
+        <strong>{session.start_time}–{session.stop_time || "Now"}</strong>
+        {(session.start_odometer !== null || session.stop_odometer !== null) && (
+          <small>{session.start_odometer ?? "—"} → {session.stop_odometer ?? "—"} mi</small>
+        )}
+        {(session.breaks || []).map((item, breakIndex) => (
+          <div className="mobile-break-timeline-row" key={`${item.start_time}-${breakIndex}`}>
+            <small>Break {item.start_time}–{item.end_time || "Now"}</small>
+            <button type="button" onClick={() => openMobileDraftEditor("break", index, breakIndex)}>Edit</button>
+          </div>
+        ))}
+        <div className="mobile-session-row-actions">
+          <button
+            type="button"
+            className="mobile-session-edit"
+            onClick={() => openMobileDraftEditor("session", index)}
+          >
+            Edit session
+          </button>
+          <button
+            type="button"
+            className="mobile-session-delete"
+            onClick={() => handleDeleteMobileSession(index)}
+            disabled={deletingMobileSessionIndex !== null}
+          >
+            {deletingMobileSessionIndex === index
+              ? "Removing…"
+              : session.stop_time
+                ? "Delete session"
+                : "Discard session"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderMobileReturnHomeEntry() {
+    if (!activeMobileShift?.home_end_time) return null;
+    return (
+      <div className="mobile-session-timeline-entry mobile-return-home-row">
+        <span>Final return home</span>
+        <strong>{activeMobileShift.home_end_time}</strong>
+        {activeMobileShift.end_home_odometer !== null && (
+          <small>{activeMobileShift.end_home_odometer} mi</small>
+        )}
+        <button
+          type="button"
+          className="mobile-session-edit"
+          onClick={() => openMobileTrackingAction("edit_home")}
+        >
+          Edit return home
+        </button>
+      </div>
+    );
+  }
+
   return (
     <main className="app">
       <div className="mobile-app-shell">
@@ -4179,8 +4329,8 @@ function App() {
                 {isMobileSessionRunning && mobileFeaturedQuestPreview && (
                   <div className={`mobile-live-quest ${mobileQuestCelebration?.questId === mobileFeaturedQuestPreview.id ? `celebrating celebrating-${mobileQuestCelebration.tier}` : ""}`}>
                     <div className="mobile-live-quest-heading">
-                      <span>{mobileFeaturedQuestPreview.title}</span>
-                      <strong>{Math.min(mobileFeaturedQuestPreview.progress_trips, mobileFeaturedQuestPreview.final_tier_trips)} / {mobileFeaturedQuestPreview.final_tier_trips}</strong>
+                      <span>{mobileFeaturedQuestPreview.title} · {mobileQuestTierProgress.label}</span>
+                      <strong>{mobileQuestTierProgress.progress} / {mobileQuestTierProgress.target}</strong>
                     </div>
                     <QuestTierProgress quest={mobileFeaturedQuestPreview} className="mobile-progress-track" />
                     {mobileQuestCelebration?.questId === mobileFeaturedQuestPreview.id && (
@@ -4211,55 +4361,50 @@ function App() {
 
                 {activeMobileShift?.sessions?.length > 0 && (
                   <div className="mobile-session-timeline">
-                    {activeMobileShift.sessions.map((session, index) => (
-                      <div key={`${session.start_time}-${index}`}>
-                        <span>Session {index + 1}</span>
-                        <strong>{session.start_time}–{session.stop_time || "Now"}</strong>
-                        {(session.start_odometer !== null || session.stop_odometer !== null) && <small>{session.start_odometer ?? "—"} → {session.stop_odometer ?? "—"} mi</small>}
-                        {(session.breaks || []).map((item, breakIndex) => (
-                          <div className="mobile-break-timeline-row" key={`${item.start_time}-${breakIndex}`}>
-                            <small>Break {item.start_time}–{item.end_time || "Now"}</small>
-                            <button type="button" onClick={() => openMobileDraftEditor("break", index, breakIndex)}>Edit</button>
-                          </div>
-                        ))}
-                        <div className="mobile-session-row-actions">
-                          <button
-                            type="button"
-                            className="mobile-session-edit"
-                            onClick={() => openMobileDraftEditor("session", index)}
-                          >
-                            Edit session
-                          </button>
-                          <button
-                            type="button"
-                            className="mobile-session-delete"
-                            onClick={() => handleDeleteMobileSession(index)}
-                            disabled={deletingMobileSessionIndex !== null}
-                          >
-                            {deletingMobileSessionIndex === index
-                              ? "Removing…"
-                              : session.stop_time
-                                ? "Delete session"
-                                : "Discard session"}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    {activeMobileShift.home_end_time && (
-                      <div className="mobile-return-home-row">
-                        <span>Final return home</span>
-                        <strong>{activeMobileShift.home_end_time}</strong>
-                        {activeMobileShift.end_home_odometer !== null && (
-                          <small>{activeMobileShift.end_home_odometer} mi</small>
+                    {isMobileSessionRunning ? (
+                      <>
+                        {renderMobileSessionTimelineEntry(
+                          activeMobileShift.sessions.at(-1),
+                          activeMobileShift.sessions.length - 1
                         )}
-                        <button
-                          type="button"
-                          className="mobile-session-edit"
-                          onClick={() => openMobileTrackingAction("edit_home")}
-                        >
-                          Edit return home
-                        </button>
-                      </div>
+                        {activeMobileShift.sessions.length > 1 && (
+                          <details className="mobile-session-history">
+                            <summary>
+                              <span>Earlier activity</span>
+                              <small>
+                                {activeMobileShift.sessions.length - 1} {activeMobileShift.sessions.length === 2 ? "session" : "sessions"}
+                              </small>
+                            </summary>
+                            <div className="mobile-session-history-body">
+                              {activeMobileShift.sessions
+                                .slice(0, -1)
+                                .map((session, index) => renderMobileSessionTimelineEntry(session, index))}
+                            </div>
+                          </details>
+                        )}
+                      </>
+                    ) : (
+                      <details className="mobile-session-history mobile-shift-history">
+                        <summary>
+                          <span>Shift timeline</span>
+                          <small>
+                            {activeMobileShift.sessions.length} {activeMobileShift.sessions.length === 1 ? "session" : "sessions"}
+                            {(() => {
+                              const breakCount = activeMobileShift.sessions.reduce(
+                                (total, session) => total + (session.breaks?.length || 0),
+                                0
+                              );
+                              return breakCount > 0
+                                ? ` · ${breakCount} ${breakCount === 1 ? "break" : "breaks"}`
+                                : "";
+                            })()}
+                          </small>
+                        </summary>
+                        <div className="mobile-session-history-body">
+                          {activeMobileShift.sessions.map((session, index) => renderMobileSessionTimelineEntry(session, index))}
+                          {renderMobileReturnHomeEntry()}
+                        </div>
+                      </details>
                     )}
                   </div>
                 )}
@@ -4486,6 +4631,17 @@ function App() {
           <section className="mobile-tab-panel mobile-more-panel">
             <h2>Tracking</h2>
             <button type="button" className="mobile-more-row" onClick={() => openQuestManager()}><span><strong>Manage quests</strong><small>{mobileSortedQuests.length} saved</small></span><b>›</b></button>
+            <article className="mobile-settings-card mobile-sound-setting">
+              <div><strong>Sound effects</strong><span>Trip saves and quest milestones</span></div>
+              <button
+                type="button"
+                className="mobile-setting-toggle"
+                aria-pressed={mobileSoundEffectsEnabled}
+                onClick={toggleMobileSoundEffects}
+              >
+                {mobileSoundEffectsEnabled ? "On" : "Off"}
+              </button>
+            </article>
             <h2>Wallet</h2>
             <article className="mobile-settings-card">
               <div><strong>Wallet floor</strong><span>Reference amount kept in Uber</span></div>
