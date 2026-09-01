@@ -351,6 +351,26 @@ function IconBase({ children }) {
   );
 }
 
+function WeekArrowIcon({ direction }) {
+  const points = direction === "left" ? "14.5 6.5 9 12 14.5 17.5" : "9.5 6.5 15 12 9.5 17.5";
+
+  return (
+    <svg
+      className="week-arrow-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <polyline points={points} />
+    </svg>
+  );
+}
+
 function ViewIcon() {
   return (
     <IconBase>
@@ -1078,42 +1098,42 @@ const ANIMATED_NUMBER_FLASH_MS = 800;
 // changes, and briefly flashes green (increase) or red (decrease) based on
 // the direction of that change -- purely a "this number just moved" visual,
 // not a judgment about whether the change itself was good or bad (e.g. a
-// wallet balance dropping could be a cash-out, not a loss). Skips the
-// animation entirely on first mount so numbers don't count up from zero
-// when the page first loads.
+// wallet balance dropping could be a cash-out, not a loss). On first mount,
+// numbers count up from zero without the directional flash so page changes
+// have the same gentle entrance as the Finance tracker.
 function AnimatedNumber({ value, format, flash = true }) {
-  const [displayValue, setDisplayValue] = useState(value);
+  const [displayValue, setDisplayValue] = useState(0);
   const [flashClass, setFlashClass] = useState("");
 
-  const previousValueRef = useRef(value);
-  const hasMountedRef = useRef(false);
+  const previousValueRef = useRef(0);
+  const isInitialAnimationRef = useRef(true);
   const animationFrameRef = useRef(null);
   const flashTimeoutRef = useRef(null);
 
   useEffect(() => {
-    if (!hasMountedRef.current) {
-      hasMountedRef.current = true;
-      previousValueRef.current = value;
-      setDisplayValue(value);
-      return;
-    }
-
     const startValue = previousValueRef.current;
     const endValue = value;
+    const isInitialAnimation = isInitialAnimationRef.current;
 
     if (startValue === endValue) {
+      setDisplayValue(endValue);
+      previousValueRef.current = endValue;
+      isInitialAnimationRef.current = false;
       return;
     }
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       setDisplayValue(endValue);
       previousValueRef.current = endValue;
+      isInitialAnimationRef.current = false;
       setFlashClass("");
       return;
     }
 
     setFlashClass(
-      flash ? (endValue > startValue ? "animated-number-up" : "animated-number-down") : ""
+      !isInitialAnimation && flash
+        ? (endValue > startValue ? "animated-number-up" : "animated-number-down")
+        : ""
     );
 
     const startTime = performance.now();
@@ -1126,16 +1146,21 @@ function AnimatedNumber({ value, format, flash = true }) {
 
       if (t < 1) {
         animationFrameRef.current = requestAnimationFrame(step);
+      } else {
+        setDisplayValue(endValue);
+        previousValueRef.current = endValue;
+        isInitialAnimationRef.current = false;
       }
     }
 
     animationFrameRef.current = requestAnimationFrame(step);
-    previousValueRef.current = endValue;
 
-    const flashTimeoutId = setTimeout(() => {
-      setFlashClass("");
-    }, ANIMATED_NUMBER_FLASH_MS);
-    flashTimeoutRef.current = flashTimeoutId;
+    if (!isInitialAnimation && flash) {
+      const flashTimeoutId = setTimeout(() => {
+        setFlashClass("");
+      }, ANIMATED_NUMBER_FLASH_MS);
+      flashTimeoutRef.current = flashTimeoutId;
+    }
 
     return () => {
       if (animationFrameRef.current) {
@@ -1195,6 +1220,8 @@ function App() {
   const [walletFloorInput, setWalletFloorInput] = useState("");
   const [quests, setQuests] = useState([]);
   const [isQuestManagerOpen, setIsQuestManagerOpen] = useState(false);
+  const [isQuestManagerClosing, setIsQuestManagerClosing] = useState(false);
+  const questManagerCloseTimerRef = useRef(null);
   const [editingQuestId, setEditingQuestId] = useState(null);
   const [questForm, setQuestForm] = useState(() => createEmptyQuestForm());
   const [questError, setQuestError] = useState("");
@@ -1439,6 +1466,31 @@ function App() {
     return {
       timeValue: match[1],
       meridiem: match[2].toUpperCase(),
+    };
+  }
+
+  function toNativeTimeValue(timeValue, meridiem) {
+    const match = String(timeValue || "").trim().match(/^(\d{1,2})(?::(\d{2}))?$/);
+    if (!match) return "";
+
+    let hour = Number(match[1]);
+    const minute = Number(match[2] || 0);
+    if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return "";
+
+    if (String(meridiem).toUpperCase() === "PM" && hour !== 12) hour += 12;
+    if (String(meridiem).toUpperCase() === "AM" && hour === 12) hour = 0;
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+
+  function splitNativeTimeValue(nativeTime) {
+    const match = String(nativeTime || "").match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+    if (!match) return { timeValue: "", meridiem: "PM" };
+
+    const hour24 = Number(match[1]);
+    const hour12 = hour24 % 12 || 12;
+    return {
+      timeValue: `${hour12}:${match[2]}`,
+      meridiem: hour24 >= 12 ? "PM" : "AM",
     };
   }
 
@@ -2369,6 +2421,8 @@ function App() {
   }
 
   function openQuestManager(quest = null) {
+    window.clearTimeout(questManagerCloseTimerRef.current);
+    setIsQuestManagerClosing(false);
     setIsQuestManagerOpen(true);
     setQuestError("");
 
@@ -2389,13 +2443,18 @@ function App() {
   }
 
   function closeQuestManager() {
-    if (isSavingQuest) {
+    if (isSavingQuest || isQuestManagerClosing) {
       return;
     }
-    setIsQuestManagerOpen(false);
-    setEditingQuestId(null);
-    setQuestForm(createEmptyQuestForm());
-    setQuestError("");
+    setIsQuestManagerClosing(true);
+    window.clearTimeout(questManagerCloseTimerRef.current);
+    questManagerCloseTimerRef.current = window.setTimeout(() => {
+      setIsQuestManagerOpen(false);
+      setIsQuestManagerClosing(false);
+      setEditingQuestId(null);
+      setQuestForm(createEmptyQuestForm());
+      setQuestError("");
+    }, 220);
   }
 
   function handleQuestInputChange(event) {
@@ -2574,6 +2633,7 @@ function App() {
     () => () => {
       window.clearTimeout(mobileSheetCloseTimerRef.current);
       window.clearTimeout(dailyLogFormCloseTimerRef.current);
+      window.clearTimeout(questManagerCloseTimerRef.current);
       window.clearTimeout(mobileQuestCelebrationTimerRef.current);
       mobileAudioContextRef.current?.close();
     },
@@ -4532,9 +4592,9 @@ function App() {
         {mobileTab === "earnings" && (
           <section className="mobile-tab-panel mobile-earnings-panel">
             <div className="mobile-week-nav">
-              <button type="button" onClick={() => changeWeek(-7)} aria-label="Previous week">←</button>
+              <button type="button" className="mobile-week-arrow" onClick={() => changeWeek(-7)} aria-label="Previous week"><WeekArrowIcon direction="left" /></button>
               <button type="button" className="mobile-week-label" onClick={() => setIsWeekBrowserOpen(true)}>{weeklyChartData.length ? formatWeekRangeLabel(weeklyChartData[0].date, weeklyChartData[6].date) : "Choose week"}</button>
-              <button type="button" onClick={() => changeWeek(7)} aria-label="Next week">→</button>
+              <button type="button" className="mobile-week-arrow" onClick={() => changeWeek(7)} aria-label="Next week"><WeekArrowIcon direction="right" /></button>
             </div>
 
             <div className="mobile-earnings-headline">
@@ -5901,30 +5961,15 @@ function App() {
                           Start time
                           <div className="time-input-row">
                             <input
-                              type="text"
-                              value={session.start_time_value}
-                              onChange={(event) =>
-                                updateWorkSession(
-                                  index,
-                                  "start_time_value",
-                                  event.target.value
-                                )
-                              }
-                              placeholder="12:00"
+                              type="time"
+                              step="60"
+                              value={toNativeTimeValue(session.start_time_value, session.start_time_meridiem)}
+                              onChange={(event) => {
+                                const parts = splitNativeTimeValue(event.target.value);
+                                updateWorkSession(index, "start_time_value", parts.timeValue);
+                                updateWorkSession(index, "start_time_meridiem", parts.meridiem);
+                              }}
                             />
-                            <select
-                              value={session.start_time_meridiem}
-                              onChange={(event) =>
-                                updateWorkSession(
-                                  index,
-                                  "start_time_meridiem",
-                                  event.target.value
-                                )
-                              }
-                            >
-                              <option value="AM">AM</option>
-                              <option value="PM">PM</option>
-                            </select>
                           </div>
                         </label>
 
@@ -5932,30 +5977,15 @@ function App() {
                           Stop time
                           <div className="time-input-row">
                             <input
-                              type="text"
-                              value={session.stop_time_value}
-                              onChange={(event) =>
-                                updateWorkSession(
-                                  index,
-                                  "stop_time_value",
-                                  event.target.value
-                                )
-                              }
-                              placeholder="1:00"
+                              type="time"
+                              step="60"
+                              value={toNativeTimeValue(session.stop_time_value, session.stop_time_meridiem)}
+                              onChange={(event) => {
+                                const parts = splitNativeTimeValue(event.target.value);
+                                updateWorkSession(index, "stop_time_value", parts.timeValue);
+                                updateWorkSession(index, "stop_time_meridiem", parts.meridiem);
+                              }}
                             />
-                            <select
-                              value={session.stop_time_meridiem}
-                              onChange={(event) =>
-                                updateWorkSession(
-                                  index,
-                                  "stop_time_meridiem",
-                                  event.target.value
-                                )
-                              }
-                            >
-                              <option value="AM">AM</option>
-                              <option value="PM">PM</option>
-                            </select>
                           </div>
                         </label>
 
@@ -6041,30 +6071,15 @@ function App() {
                             Start time
                             <div className="time-input-row">
                               <input
-                                type="text"
-                                value={session.start_time_value}
-                                onChange={(event) =>
-                                  updateBreakSession(
-                                    index,
-                                    "start_time_value",
-                                    event.target.value
-                                  )
-                                }
-                                placeholder="6:20"
+                                type="time"
+                                step="60"
+                                value={toNativeTimeValue(session.start_time_value, session.start_time_meridiem)}
+                                onChange={(event) => {
+                                  const parts = splitNativeTimeValue(event.target.value);
+                                  updateBreakSession(index, "start_time_value", parts.timeValue);
+                                  updateBreakSession(index, "start_time_meridiem", parts.meridiem);
+                                }}
                               />
-                              <select
-                                value={session.start_time_meridiem}
-                                onChange={(event) =>
-                                  updateBreakSession(
-                                    index,
-                                    "start_time_meridiem",
-                                    event.target.value
-                                  )
-                                }
-                              >
-                                <option value="AM">AM</option>
-                                <option value="PM">PM</option>
-                              </select>
                             </div>
                           </label>
 
@@ -6072,30 +6087,15 @@ function App() {
                             End time
                             <div className="time-input-row">
                               <input
-                                type="text"
-                                value={session.end_time_value}
-                                onChange={(event) =>
-                                  updateBreakSession(
-                                    index,
-                                    "end_time_value",
-                                    event.target.value
-                                  )
-                                }
-                                placeholder="7:07"
+                                type="time"
+                                step="60"
+                                value={toNativeTimeValue(session.end_time_value, session.end_time_meridiem)}
+                                onChange={(event) => {
+                                  const parts = splitNativeTimeValue(event.target.value);
+                                  updateBreakSession(index, "end_time_value", parts.timeValue);
+                                  updateBreakSession(index, "end_time_meridiem", parts.meridiem);
+                                }}
                               />
-                              <select
-                                value={session.end_time_meridiem}
-                                onChange={(event) =>
-                                  updateBreakSession(
-                                    index,
-                                    "end_time_meridiem",
-                                    event.target.value
-                                  )
-                                }
-                              >
-                                <option value="AM">AM</option>
-                                <option value="PM">PM</option>
-                              </select>
                             </div>
                           </label>
 
@@ -6162,20 +6162,14 @@ function App() {
                     Home/end time
                     <div className="time-input-row">
                       <input
-                        type="text"
-                        name="home_end_time_value"
-                        value={formData.home_end_time_value}
-                        onChange={handleInputChange}
-                        placeholder="9:00"
+                        type="time"
+                        step="60"
+                        value={toNativeTimeValue(formData.home_end_time_value, formData.home_end_time_meridiem)}
+                        onChange={(event) => {
+                          const parts = splitNativeTimeValue(event.target.value);
+                          setFormData((current) => ({ ...current, home_end_time_value: parts.timeValue, home_end_time_meridiem: parts.meridiem }));
+                        }}
                       />
-                      <select
-                        name="home_end_time_meridiem"
-                        value={formData.home_end_time_meridiem}
-                        onChange={handleInputChange}
-                      >
-                        <option value="AM">AM</option>
-                        <option value="PM">PM</option>
-                      </select>
                     </div>
                   </label>
 
@@ -6599,8 +6593,16 @@ function App() {
               <label>
                 Time
                 <div className="mobile-time-entry">
-                  <input type="text" inputMode="numeric" value={mobileTrackingForm.time_value} onChange={(event) => setMobileTrackingForm((current) => ({ ...current, time_value: event.target.value }))} placeholder="5:30" required />
-                  <select value={mobileTrackingForm.meridiem} onChange={(event) => setMobileTrackingForm((current) => ({ ...current, meridiem: event.target.value }))}><option>AM</option><option>PM</option></select>
+                  <input
+                    type="time"
+                    step="60"
+                    value={toNativeTimeValue(mobileTrackingForm.time_value, mobileTrackingForm.meridiem)}
+                    onChange={(event) => {
+                      const parts = splitNativeTimeValue(event.target.value);
+                      setMobileTrackingForm((current) => ({ ...current, time_value: parts.timeValue, meridiem: parts.meridiem }));
+                    }}
+                    required
+                  />
                 </div>
               </label>
               <label>
@@ -6700,8 +6702,16 @@ function App() {
                   <label>
                     Time
                     <div className="mobile-time-entry">
-                      <input type="text" inputMode="numeric" value={mobileDraftEditForm.start_time_value} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, start_time_value: event.target.value }))} placeholder="5:30" required />
-                      <select value={mobileDraftEditForm.start_time_meridiem} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, start_time_meridiem: event.target.value }))}><option>AM</option><option>PM</option></select>
+                      <input
+                        type="time"
+                        step="60"
+                        value={toNativeTimeValue(mobileDraftEditForm.start_time_value, mobileDraftEditForm.start_time_meridiem)}
+                        onChange={(event) => {
+                          const parts = splitNativeTimeValue(event.target.value);
+                          setMobileDraftEditForm((current) => ({ ...current, start_time_value: parts.timeValue, start_time_meridiem: parts.meridiem }));
+                        }}
+                        required
+                      />
                     </div>
                   </label>
                   <label>
@@ -6717,8 +6727,16 @@ function App() {
                     <label>
                       Time
                       <div className="mobile-time-entry">
-                        <input type="text" inputMode="numeric" value={mobileDraftEditForm.end_time_value} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, end_time_value: event.target.value }))} placeholder="5:30" required />
-                        <select value={mobileDraftEditForm.end_time_meridiem} onChange={(event) => setMobileDraftEditForm((current) => ({ ...current, end_time_meridiem: event.target.value }))}><option>AM</option><option>PM</option></select>
+                        <input
+                          type="time"
+                          step="60"
+                          value={toNativeTimeValue(mobileDraftEditForm.end_time_value, mobileDraftEditForm.end_time_meridiem)}
+                          onChange={(event) => {
+                            const parts = splitNativeTimeValue(event.target.value);
+                            setMobileDraftEditForm((current) => ({ ...current, end_time_value: parts.timeValue, end_time_meridiem: parts.meridiem }));
+                          }}
+                          required
+                        />
                       </div>
                     </label>
                     <label>
@@ -6738,7 +6756,7 @@ function App() {
       })()}
 
       {isQuestManagerOpen && (
-        <div className="quest-manager-overlay" onClick={closeQuestManager}>
+        <div className={`quest-manager-overlay ${isQuestManagerClosing ? "quest-manager-closing" : ""}`} onClick={closeQuestManager}>
           <div className="quest-manager-panel" onClick={(event) => event.stopPropagation()}>
             <div className="quest-manager-header">
               <div>

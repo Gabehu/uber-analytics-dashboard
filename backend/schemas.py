@@ -41,6 +41,20 @@ class WalletAdjustmentResult(BaseModel):
     applied: bool
 
 
+class WalletStateReplace(BaseModel):
+    balance: float = Field(ge=0)
+    source_date: str
+    source_updated_at: str
+
+
+class WalletStateResult(BaseModel):
+    source_id: str
+    balance_before: float
+    current_balance: float
+    state_updated_at: str
+    applied: bool
+
+
 class QuestCreate(BaseModel):
     start_date: str
     end_date: str

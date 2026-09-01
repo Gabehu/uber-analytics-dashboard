@@ -35,6 +35,7 @@ from database import (
     upsert_daily_draft,
     delete_daily_draft,
     apply_wallet_adjustment,
+    replace_wallet_state,
     get_pending_finance_wallet_snapshots,
     mark_finance_wallet_snapshot,
     get_operational_wallet_state,
@@ -98,6 +99,8 @@ from schemas import (
     WalletFloorUpdate,
     WalletAdjustmentCreate,
     WalletAdjustmentResult,
+    WalletStateReplace,
+    WalletStateResult,
     Quest,
     QuestCreate,
     DailyDraft,
@@ -171,6 +174,33 @@ def finance_wallet_adjustment(
             source_id,
             payload.amount,
             payload.direction,
+            payload.source_date,
+            payload.source_updated_at,
+        )
+        _sync_finance_wallet_snapshots()
+        return result
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.put(
+    "/api/integrations/finance/wallet-state/{source_id}",
+    response_model=WalletStateResult,
+)
+def replace_finance_wallet_state(
+    source_id: str,
+    payload: WalletStateReplace,
+    x_uber_finance_key: str | None = Header(default=None),
+):
+    expected_key = os.getenv("UBER_FINANCE_SYNC_KEY")
+    if not expected_key or not x_uber_finance_key or not secrets.compare_digest(
+        x_uber_finance_key, expected_key
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Finance integration key.")
+    try:
+        result = replace_wallet_state(
+            source_id,
+            payload.balance,
             payload.source_date,
             payload.source_updated_at,
         )

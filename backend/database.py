@@ -1479,6 +1479,95 @@ def apply_wallet_adjustment(source_id, amount, direction, source_date, source_up
         conn.close()
 
 
+def replace_wallet_state(source_id, balance, source_date, source_updated_at):
+    """Apply a timestamp-ordered absolute wallet correction from Finance."""
+    if not source_id or not source_id.strip():
+        raise ValueError("A stable source ID is required.")
+    if balance < 0:
+        raise ValueError("Wallet balance cannot be negative.")
+    try:
+        incoming_at = datetime.fromisoformat(source_updated_at.replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as error:
+        raise ValueError("source_updated_at must be an ISO timestamp.") from error
+    if incoming_at.tzinfo is None:
+        incoming_at = incoming_at.replace(tzinfo=timezone.utc)
+    incoming_at = incoming_at.astimezone(timezone.utc)
+    normalized_timestamp = incoming_at.isoformat()
+    normalized_balance = round(float(balance), 2)
+
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        state = conn.execute(
+            "SELECT balance, updated_at, source_id FROM wallet_state WHERE id = 1"
+        ).fetchone()
+        if state is None or state["balance"] is None:
+            balance_before = normalized_balance
+            current_at = None
+        else:
+            balance_before = round(float(state["balance"]), 2)
+            try:
+                current_at = datetime.fromisoformat(
+                    state["updated_at"].replace("Z", "+00:00")
+                )
+                if current_at.tzinfo is None:
+                    current_at = current_at.replace(tzinfo=timezone.utc)
+                current_at = current_at.astimezone(timezone.utc)
+            except (AttributeError, ValueError):
+                current_at = None
+
+        if current_at is not None and incoming_at < current_at:
+            conn.commit()
+            return {
+                "source_id": source_id,
+                "balance_before": balance_before,
+                "current_balance": balance_before,
+                "state_updated_at": current_at.isoformat(),
+                "applied": False,
+            }
+
+        already_applied = (
+            state is not None
+            and state["source_id"] == source_id
+            and balance_before == normalized_balance
+            and current_at == incoming_at
+        )
+        conn.execute(
+            """
+            INSERT INTO wallet_state
+                (id, balance, as_of, updated_at, source_type, source_id)
+            VALUES (1, ?, ?, ?, 'finance_override', ?)
+            ON CONFLICT(id) DO UPDATE SET
+                balance = excluded.balance,
+                as_of = excluded.as_of,
+                updated_at = excluded.updated_at,
+                source_type = excluded.source_type,
+                source_id = excluded.source_id
+            """,
+            (normalized_balance, source_date, normalized_timestamp, source_id),
+        )
+        _queue_finance_wallet_snapshot(
+            conn,
+            f"uber-wallet-finance-override:{source_id}",
+            normalized_balance,
+            source_date,
+            normalized_timestamp,
+        )
+        conn.commit()
+        return {
+            "source_id": source_id,
+            "balance_before": balance_before,
+            "current_balance": normalized_balance,
+            "state_updated_at": normalized_timestamp,
+            "applied": not already_applied,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_pending_finance_wallet_snapshots():
     conn = get_connection()
     rows = conn.execute(

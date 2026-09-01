@@ -128,6 +128,24 @@ class DatabaseBehaviorTests(unittest.TestCase):
         self.assertEqual(credit["balance_after"], 300)
         self.assertEqual(database.get_summary_data()["current_wallet_balance"], 300)
 
+    def test_finance_absolute_wallet_update_uses_latest_timestamp(self):
+        database.create_daily_record(self.record(wallet_balance=300))
+
+        applied = database.replace_wallet_state(
+            "finance-manual-1", 75, "2031-01-06", "2031-01-06T13:00:00Z"
+        )
+        stale = database.replace_wallet_state(
+            "finance-manual-stale", 999, "2031-01-06", "2031-01-06T12:59:00Z"
+        )
+        duplicate = database.replace_wallet_state(
+            "finance-manual-1", 75, "2031-01-06", "2031-01-06T13:00:00Z"
+        )
+
+        self.assertTrue(applied["applied"])
+        self.assertFalse(stale["applied"])
+        self.assertFalse(duplicate["applied"])
+        self.assertEqual(database.get_summary_data()["current_wallet_balance"], 75)
+
     def test_daily_wallet_snapshot_is_queued_for_finance_and_updates_in_place(self):
         record = self.record(wallet_balance=300)
         database.create_daily_record(record)
