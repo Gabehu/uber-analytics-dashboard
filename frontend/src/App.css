@@ -271,6 +271,17 @@ h1 {
   background: transparent;
 }
 
+.wallet-sync-retry {
+  background: transparent;
+  border: 0;
+  color: var(--accent-amber, #f4b85c);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 @media (min-width: 640px) {
   .card-featured {
     grid-column: span 2;
@@ -5617,6 +5628,7 @@ th {
     color: var(--text-secondary);
     font-size: 12px;
   }
+
 
   .mobile-wallet-card small {
     margin-top: 8px;

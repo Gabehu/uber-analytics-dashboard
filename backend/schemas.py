@@ -9,6 +9,10 @@ class Summary(BaseModel):
     avg_per_trip: float
     current_wallet_balance: float | None = None
     current_wallet_as_of: str | None = None
+    current_wallet_source: str | None = None
+    current_wallet_updated_at: str | None = None
+    latest_finance_adjustment: dict | None = None
+    finance_sync: dict | None = None
 
 
 class WalletFloor(BaseModel):
@@ -17,6 +21,24 @@ class WalletFloor(BaseModel):
 
 class WalletFloorUpdate(BaseModel):
     uber_wallet_floor: float
+
+
+class WalletAdjustmentCreate(BaseModel):
+    amount: float = Field(gt=0)
+    direction: str
+    source_date: str
+    source_updated_at: str
+
+
+class WalletAdjustmentResult(BaseModel):
+    source_id: str
+    amount: float
+    direction: str
+    balance_before: float
+    balance_after: float
+    current_balance: float
+    state_updated_at: str
+    applied: bool
 
 
 class QuestCreate(BaseModel):

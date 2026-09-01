@@ -2,7 +2,7 @@ import json
 import re
 import sqlite3
 import uuid
-from datetime import date as date_cls, datetime
+from datetime import date as date_cls, datetime, timezone
 from pathlib import Path
 
 DATABASE_PATH = Path(__file__).parent / "uber_dashboard.db"
@@ -758,6 +758,80 @@ def initialize_database():
         "INSERT OR IGNORE INTO app_settings (id, uber_wallet_floor) VALUES (1, NULL)"
     )
 
+    # Operational wallet state is separate from dated daily-log snapshots.
+    # Finance transfers can change today's real wallet without rewriting a
+    # historical Uber day. source_id makes retries safe.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS wallet_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            balance REAL,
+            as_of TEXT,
+            updated_at TEXT,
+            source_type TEXT,
+            source_id TEXT
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS wallet_adjustments (
+            source_id TEXT PRIMARY KEY,
+            amount REAL NOT NULL,
+            direction TEXT NOT NULL,
+            balance_before REAL NOT NULL,
+            balance_after REAL NOT NULL,
+            source_date TEXT NOT NULL,
+            source_updated_at TEXT NOT NULL,
+            received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS integration_outbox (
+            source_id TEXT PRIMARY KEY,
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            synced_at TEXT
+        )
+        """
+    )
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO wallet_state
+            (id, balance, as_of, updated_at, source_type, source_id)
+        SELECT 1, wallet_balance, date, CURRENT_TIMESTAMP, 'daily_log', date
+        FROM daily_logs
+        WHERE wallet_balance IS NOT NULL
+        ORDER BY date DESC
+        LIMIT 1
+        """
+    )
+    current_wallet = cursor.execute(
+        "SELECT balance, as_of, updated_at FROM wallet_state WHERE id = 1 AND balance IS NOT NULL"
+    ).fetchone()
+    if current_wallet is not None:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO integration_outbox
+                (source_id, event_type, payload_json, status)
+            VALUES (?, 'finance_wallet_snapshot', ?, 'pending')
+            """,
+            (
+                "uber-wallet-current",
+                json.dumps({
+                    "balance": round(current_wallet["balance"], 2),
+                    "source_date": current_wallet["as_of"],
+                    "source_updated_at": current_wallet["updated_at"],
+                }),
+            ),
+        )
+
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS quests (
@@ -1215,14 +1289,25 @@ def get_summary_data():
     # total. Not every day logs it, so this is "most recent day that did."
     cursor.execute(
         """
-        SELECT date, wallet_balance
-        FROM daily_logs
-        WHERE wallet_balance IS NOT NULL
-        ORDER BY date DESC
-        LIMIT 1
+        SELECT as_of AS date, balance AS wallet_balance, source_type,
+               source_id, updated_at
+        FROM wallet_state
+        WHERE id = 1 AND balance IS NOT NULL
         """
     )
     wallet_row = cursor.fetchone()
+    latest_adjustment = cursor.execute(
+        "SELECT * FROM wallet_adjustments ORDER BY received_at DESC LIMIT 1"
+    ).fetchone()
+    finance_sync = cursor.execute(
+        """
+        SELECT status, attempts, last_error, synced_at
+        FROM integration_outbox
+        ORDER BY CASE status WHEN 'failed' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END DESC,
+                 rowid DESC
+        LIMIT 1
+        """
+    ).fetchone()
 
     conn.close()
 
@@ -1241,7 +1326,190 @@ def get_summary_data():
         "avg_per_trip": round(avg_per_trip, 2),
         "current_wallet_balance": round(wallet_row["wallet_balance"], 2) if wallet_row else None,
         "current_wallet_as_of": wallet_row["date"] if wallet_row else None,
+        "current_wallet_source": wallet_row["source_type"] if wallet_row else None,
+        "current_wallet_updated_at": wallet_row["updated_at"] if wallet_row else None,
+        "latest_finance_adjustment": dict(latest_adjustment) if latest_adjustment else None,
+        "finance_sync": dict(finance_sync) if finance_sync else None,
     }
+
+
+def _queue_finance_wallet_snapshot(cursor, source_id, balance, source_date, source_updated_at):
+    payload = json.dumps({
+        "balance": round(balance, 2),
+        "source_date": source_date,
+        "source_updated_at": source_updated_at,
+    })
+    cursor.execute(
+        """
+        INSERT INTO integration_outbox
+            (source_id, event_type, payload_json, status, attempts, last_error, synced_at)
+        VALUES (?, 'finance_wallet_snapshot', ?, 'pending', 0, NULL, NULL)
+        ON CONFLICT(source_id) DO UPDATE SET
+            payload_json = excluded.payload_json,
+            status = 'pending',
+            attempts = 0,
+            last_error = NULL,
+            synced_at = NULL
+        """,
+        (source_id, payload),
+    )
+
+
+def _refresh_wallet_state_from_daily(cursor, source_date, wallet_balance):
+    """Make a newly saved current-or-newer daily snapshot authoritative."""
+    if wallet_balance is None:
+        return
+    current = cursor.execute(
+        "SELECT as_of FROM wallet_state WHERE id = 1"
+    ).fetchone()
+    if current is not None and current["as_of"] and source_date < current["as_of"]:
+        return
+    updated_at = datetime.now(timezone.utc).isoformat()
+    cursor.execute(
+        """
+        INSERT INTO wallet_state
+            (id, balance, as_of, updated_at, source_type, source_id)
+        VALUES (1, ?, ?, ?, 'daily_log', ?)
+        ON CONFLICT(id) DO UPDATE SET
+            balance = excluded.balance,
+            as_of = excluded.as_of,
+            updated_at = excluded.updated_at,
+            source_type = excluded.source_type,
+            source_id = excluded.source_id
+        """,
+        (wallet_balance, source_date, updated_at, source_date),
+    )
+    _queue_finance_wallet_snapshot(
+        cursor,
+        f"uber-wallet-daily:{source_date}",
+        wallet_balance,
+        source_date,
+        updated_at,
+    )
+
+
+def apply_wallet_adjustment(source_id, amount, direction, source_date, source_updated_at):
+    """Apply one Finance wallet debit or credit exactly once."""
+    if not source_id or not source_id.strip():
+        raise ValueError("A stable source ID is required.")
+    if amount <= 0:
+        raise ValueError("Adjustment amount must be greater than zero.")
+    if direction not in {"debit", "credit"}:
+        raise ValueError("Direction must be debit or credit.")
+
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            "SELECT * FROM wallet_adjustments WHERE source_id = ?", (source_id,)
+        ).fetchone()
+        if existing is not None:
+            if existing["amount"] != amount or existing["direction"] != direction:
+                raise ValueError("This source ID was already used for a different adjustment.")
+            state = conn.execute(
+                "SELECT balance, updated_at FROM wallet_state WHERE id = 1"
+            ).fetchone()
+            conn.commit()
+            return {
+                "source_id": source_id,
+                "amount": existing["amount"],
+                "direction": existing["direction"],
+                "balance_before": existing["balance_before"],
+                "balance_after": existing["balance_after"],
+                "current_balance": state["balance"],
+                "state_updated_at": state["updated_at"],
+                "applied": False,
+            }
+
+        state = conn.execute(
+            "SELECT balance FROM wallet_state WHERE id = 1"
+        ).fetchone()
+        if state is None or state["balance"] is None:
+            raise ValueError("Log an Uber wallet balance before syncing a Finance transfer.")
+        balance_before = round(float(state["balance"]), 2)
+        balance_after = round(
+            balance_before - amount if direction == "debit" else balance_before + amount,
+            2,
+        )
+        if balance_after < 0:
+            raise ValueError("This transfer would make the Uber wallet balance negative.")
+
+        conn.execute(
+            """
+            INSERT INTO wallet_adjustments
+                (source_id, amount, direction, balance_before, balance_after,
+                 source_date, source_updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (source_id, amount, direction, balance_before, balance_after,
+             source_date, source_updated_at),
+        )
+        state_updated_at = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            UPDATE wallet_state
+            SET balance = ?, as_of = ?, updated_at = ?,
+                source_type = 'finance_adjustment', source_id = ?
+            WHERE id = 1
+            """,
+            (balance_after, source_date, state_updated_at, source_id),
+        )
+        _queue_finance_wallet_snapshot(
+            conn,
+            f"uber-wallet-adjustment:{source_id}",
+            balance_after,
+            source_date,
+            state_updated_at,
+        )
+        conn.commit()
+        return {
+            "source_id": source_id,
+            "amount": round(amount, 2),
+            "direction": direction,
+            "balance_before": balance_before,
+            "balance_after": balance_after,
+            "current_balance": balance_after,
+            "state_updated_at": state_updated_at,
+            "applied": True,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_pending_finance_wallet_snapshots():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM integration_outbox WHERE status != 'synced' ORDER BY created_at, rowid"
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_operational_wallet_state():
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT balance, as_of, updated_at, source_type, source_id FROM wallet_state WHERE id = 1"
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def mark_finance_wallet_snapshot(source_id, status, last_error=None):
+    conn = get_connection()
+    conn.execute(
+        """
+        UPDATE integration_outbox
+        SET status = ?, attempts = attempts + 1, last_error = ?,
+            synced_at = CASE WHEN ? = 'synced' THEN CURRENT_TIMESTAMP ELSE NULL END
+        WHERE source_id = ?
+        """,
+        (status, last_error, status, source_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_wallet_floor():
@@ -1828,6 +2096,8 @@ def create_daily_record(record):
         (_trip_events_to_storage(trip_events), record.date),
     )
 
+    _refresh_wallet_state_from_daily(cursor, record.date, record.wallet_balance)
+
     conn.commit()
     conn.close()
 
@@ -2047,6 +2317,8 @@ def update_daily_record(date: str, record):
         "UPDATE daily_logs SET trip_events_json = ? WHERE id = ?",
         (_trip_events_to_storage(trip_events), source_row["id"]),
     )
+
+    _refresh_wallet_state_from_daily(cursor, target_date, record.wallet_balance)
 
     conn.commit()
     conn.close()

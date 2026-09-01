@@ -163,6 +163,23 @@ python seed_mock.py
 
 It refuses to run over what looks like real accumulated data; pass `--force` to override. Not part of the app itself — just a testing convenience.
 
+## Finance wallet adjustments
+
+The sibling Finance app can send authenticated, idempotent wallet adjustments
+when an Uber allocation is sent to transit or canceled. These adjustments are
+stored separately from dated daily logs, so a cash-out never rewrites an old
+workday. Saving a current or newer daily wallet snapshot remains authoritative.
+
+Uber is the authority for the operational wallet. Every saved wallet snapshot
+is queued for Finance, where it updates only the Uber account balance—not income
+or transaction history. Failed delivery never blocks an Uber save and can be
+retried from the wallet card. Finance adjustments are labeled on that card so
+cash-outs are visible instead of silently changing the number.
+
+Use `start.bat` or `start-phone.bat` for both projects. Their launchers create
+and reuse a private `finance-uber-sync.key` file in the shared `Trackers`
+folder. No SQLite database is shared between the apps.
+
 ## Version History
 
 - **v1 / v1.1** — Local prototype (Streamlit) proving out the basic tracking idea.

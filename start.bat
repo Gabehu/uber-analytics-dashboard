@@ -3,6 +3,12 @@ setlocal
 
 cd /d "%~dp0"
 
+REM Finance and Uber share only this generated API key, never a database.
+set "SYNC_KEY_FILE=%~dp0..\finance-uber-sync.key"
+if not exist "%SYNC_KEY_FILE%" powershell.exe -NoProfile -Command "$rng=New-Object Security.Cryptography.RNGCryptoServiceProvider; $bytes=New-Object byte[] 32; $rng.GetBytes($bytes); $rng.Dispose(); [IO.File]::WriteAllText('%SYNC_KEY_FILE%',([BitConverter]::ToString($bytes)-replace '-',''))"
+set /p UBER_FINANCE_SYNC_KEY=<"%SYNC_KEY_FILE%"
+set "FINANCE_API_URL=http://127.0.0.1:8001"
+
 REM ============================================================
 REM Uber Nest Tracker - Startup Script
 REM

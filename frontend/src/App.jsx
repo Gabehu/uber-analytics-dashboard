@@ -2305,6 +2305,16 @@ function App() {
     }
   }
 
+  async function refreshWalletSummary() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/summary`);
+      if (!response.ok) return;
+      setSummary(await response.json());
+    } catch {
+      // The full connection warning remains owned by fetchDashboardData.
+    }
+  }
+
   async function installMobileApp() {
     if (!installPrompt) return;
     await installPrompt.prompt();
@@ -2342,6 +2352,19 @@ function App() {
       setIsEditingWalletFloor(false);
     } catch {
       // Leave the edit UI open so the user can retry.
+    }
+  }
+
+  async function retryFinanceWalletSync() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/integrations/finance/retry`, {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error("Finance sync retry failed.");
+      await fetchDashboardData();
+      setSuccessMessage("Finance wallet sync retried.");
+    } catch (syncError) {
+      setError(syncError.message);
     }
   }
 
@@ -2483,6 +2506,20 @@ function App() {
   useEffect(() => {
     fetchDashboardData();
     fetchWalletFloor();
+  }, []);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshWalletSummary();
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const intervalId = window.setInterval(refreshWhenVisible, 15000);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   useEffect(() => {
@@ -4623,6 +4660,9 @@ function App() {
               <h2>{summary?.current_wallet_balance !== null && summary?.current_wallet_balance !== undefined ? `$${summary.current_wallet_balance.toFixed(2)}` : "Not logged"}</h2>
               <p>{summary?.current_wallet_as_of ? `Last recorded ${formatMobileDate(summary.current_wallet_as_of)}` : "Add a wallet balance to a daily log."}</p>
               {walletFloor !== null && summary?.current_wallet_balance !== null && <small>${Math.max(summary.current_wallet_balance - walletFloor, 0).toFixed(2)} above wallet floor</small>}
+              {summary?.finance_sync?.status === "failed" && (
+                <button type="button" className="wallet-sync-retry" onClick={retryFinanceWalletSync}>Finance update pending · Retry</button>
+              )}
             </article>
           </section>
         )}
@@ -4692,6 +4732,9 @@ function App() {
                 <span className="card-caption">
                   as of {formatShortDate(new Date(`${summary.current_wallet_as_of}T00:00:00`))}
                 </span>
+                {summary.finance_sync?.status === "failed" && (
+                  <button type="button" className="wallet-sync-retry" onClick={retryFinanceWalletSync}>Finance update pending · Retry</button>
+                )}
 
                 {isEditingWalletFloor ? (
                   <span className="card-caption wallet-floor-edit-row">

@@ -109,6 +109,41 @@ class DatabaseBehaviorTests(unittest.TestCase):
             "2031-01-06T20:45:00.000Z",
         )
 
+    def test_finance_wallet_adjustment_is_idempotent_and_reversible(self):
+        database.create_daily_record(self.record(wallet_balance=300))
+
+        debit = database.apply_wallet_adjustment(
+            "finance-transfer-1", 225, "debit", "2031-01-06", "2031-01-06T12:00:00Z"
+        )
+        duplicate = database.apply_wallet_adjustment(
+            "finance-transfer-1", 225, "debit", "2031-01-06", "2031-01-06T12:00:00Z"
+        )
+        credit = database.apply_wallet_adjustment(
+            "finance-transfer-1:reversal", 225, "credit", "2031-01-06", "2031-01-06T12:05:00Z"
+        )
+
+        self.assertEqual(debit["balance_after"], 75)
+        self.assertTrue(debit["applied"])
+        self.assertFalse(duplicate["applied"])
+        self.assertEqual(credit["balance_after"], 300)
+        self.assertEqual(database.get_summary_data()["current_wallet_balance"], 300)
+
+    def test_daily_wallet_snapshot_is_queued_for_finance_and_updates_in_place(self):
+        record = self.record(wallet_balance=300)
+        database.create_daily_record(record)
+        queued = database.get_pending_finance_wallet_snapshots()
+        daily_row = next(row for row in queued if row["source_id"].startswith("uber-wallet-daily:"))
+        self.assertIn('"balance": 300', daily_row["payload_json"])
+
+        database.mark_finance_wallet_snapshot(daily_row["source_id"], "synced")
+        database.update_daily_record(
+            record.date, record.model_copy(update={"wallet_balance": 325})
+        )
+        refreshed = database.get_pending_finance_wallet_snapshots()
+        daily_rows = [row for row in refreshed if row["source_id"] == daily_row["source_id"]]
+        self.assertEqual(len(daily_rows), 1)
+        self.assertIn('"balance": 325', daily_rows[0]["payload_json"])
+
     def test_sessions_and_breaks_preserve_real_time_and_work_mileage_rules(self):
         record = self.record(
             work_start_time="12:00 PM",
