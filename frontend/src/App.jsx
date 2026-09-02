@@ -4803,7 +4803,10 @@ function App() {
               </section>
             )}
 
-            <div className="mobile-week-detail-sections mobile-selection-content" key={`details-${selectedRecordDate || selectedWeekStart}`}>
+            <div
+              className={`mobile-week-detail-sections mobile-selection-content ${isSelectedDayMode && !selectedRecord ? "empty-day-selection" : ""}`}
+              key={`details-${selectedRecordDate || selectedWeekStart}`}
+            >
                 <section>
                   <h2>Earnings breakdown</h2>
                   <div><span>Net fare</span><strong>${displayedNetFare.toFixed(2)}</strong></div>

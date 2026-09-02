@@ -5733,6 +5733,10 @@ th {
     border-top: none;
   }
 
+  .mobile-week-detail-sections.empty-day-selection section:first-child {
+    border-top: none;
+  }
+
   .mobile-week-detail-sections section > div span,
   .mobile-week-detail-sections p {
     color: var(--text-secondary);

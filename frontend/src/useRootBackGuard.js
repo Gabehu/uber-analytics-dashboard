@@ -98,13 +98,19 @@ export default function useRootBackGuard(isAtRoot, appKey) {
       const deadline = Date.now() + EXIT_WINDOW_MS;
       exitDeadlineRef.current = deadline;
       setShowExitHint(true);
-      // Return to the original guard entry instead of creating another
-      // synthetic entry. Android Chrome can skip entries manufactured from
-      // inside a Back event, which made a later Back close the PWA outright.
-      window.history.forward();
       window.clearTimeout(resetTimerRef.current);
       resetTimerRef.current = window.setTimeout(() => {
-        if (exitDeadlineRef.current === deadline) disarm();
+        if (exitDeadlineRef.current !== deadline) return;
+
+        disarm();
+        // The first Back leaves us on the sentinel while the hint is visible.
+        // If the user does not press Back again quickly, return to the guard
+        // entry so the next physical Back starts a fresh two-press sequence.
+        if (window.history.state?.[sentinelKey] === launchId) {
+          window.history.forward();
+        } else {
+          ensureFreshGuard();
+        }
       }, EXIT_WINDOW_MS);
     };
 
@@ -113,16 +119,6 @@ export default function useRootBackGuard(isAtRoot, appKey) {
         !isAtRootRef.current ||
         event.state?.[sentinelKey] !== launchId
       ) {
-        return;
-      }
-
-      const stillWithinExitWindow =
-        exitDeadlineRef.current > 0 &&
-        Date.now() <= exitDeadlineRef.current;
-
-      if (stillWithinExitWindow) {
-        disarm();
-        window.history.back();
         return;
       }
 
