@@ -1,5 +1,7 @@
 import { Component, useEffect, useRef, useState } from "react";
 import "./App.css";
+import useHistoryLayer from "./useHistoryLayer";
+import useRootBackGuard from "./useRootBackGuard";
 
 // Production is served by FastAPI from the same origin, including when the
 // desktop is reached privately through Tailscale.  Keeping this empty makes
@@ -1206,6 +1208,7 @@ function App() {
   const [dailyLogTagFilter, setDailyLogTagFilter] = useState("all");
   const [isDailyLogToolsOpen, setIsDailyLogToolsOpen] = useState(false);
 
+  const dailyLogSectionRef = useRef(null);
   const formSectionRef = useRef(null);
   const importFileInputRef = useRef(null);
   const [importPreview, setImportPreview] = useState(null);
@@ -1230,6 +1233,8 @@ function App() {
   const [weeklyNoteDraft, setWeeklyNoteDraft] = useState("");
   const [isSavingWeeklyNote, setIsSavingWeeklyNote] = useState(false);
   const [mobileTab, setMobileTab] = useState("today");
+  const [mobileRoute, setMobileRoute] = useState(() => window.location.hash.slice(1) || "/today");
+  const pendingMobileTabRouteRef = useRef(null);
   const [isQuickUpdateOpen, setIsQuickUpdateOpen] = useState(false);
   const [isSavingQuickUpdate, setIsSavingQuickUpdate] = useState(false);
   const [quickUpdateForm, setQuickUpdateForm] = useState({
@@ -1278,6 +1283,125 @@ function App() {
   const mobileSheetCloseTimerRef = useRef(null);
   const [isServerReachable, setIsServerReachable] = useState(true);
   const [installPrompt, setInstallPrompt] = useState(null);
+
+  useHistoryLayer(isFormOpen || editingDate !== null, () => closeDailyLogForm(), "daily-log-form");
+  useHistoryLayer(isQuestManagerOpen, () => closeQuestManager(), "quest-manager");
+  useHistoryLayer(isQuickUpdateOpen, () => closeQuickUpdateSheet(), "quick-update");
+  useHistoryLayer(mobileTrackingAction !== null, () => closeMobileTrackingSheet(), "tracking-sheet");
+  useHistoryLayer(isMobileDraftDetailsOpen, () => closeMobileDraftDetailsSheet(), "draft-details");
+  useHistoryLayer(mobileDraftEditTarget !== null, () => closeMobileDraftEditSheet(), "draft-edit");
+  useHistoryLayer(isWeekBrowserOpen, () => setIsWeekBrowserOpen(false), "week-browser");
+  useHistoryLayer(isDeleteAllOpen, () => handleCancelDeleteAll(), "delete-all");
+
+  function applyMobileRoute(nextRoute) {
+    const normalized = nextRoute.startsWith("/") ? nextRoute : `/${nextRoute}`;
+    setMobileRoute(normalized);
+
+    const selectedDayMatch = normalized.match(/^\/earnings\/(\d{4}-\d{2}-\d{2})$/);
+    if (selectedDayMatch) {
+      setMobileTab("earnings");
+      selectRecordAndWeek(selectedDayMatch[1]);
+      return;
+    }
+
+    if (normalized === "/earnings") {
+      setMobileTab("earnings");
+      setSelectedRecordDate(null);
+      return;
+    }
+
+    if (normalized === "/more") {
+      setMobileTab("more");
+      return;
+    }
+
+    setMobileTab("today");
+    setSelectedRecordDate(null);
+    setSelectedWeekStart(
+      formatDateForInput(getWeekStart(getTodayInputValue()))
+    );
+  }
+
+  function navigateMobile(nextRoute, { replace = false, tabSlot = false } = {}) {
+    const normalized = nextRoute.startsWith("/") ? nextRoute : `/${nextRoute}`;
+    if (normalized === mobileRoute) {
+      applyMobileRoute(normalized);
+      return;
+    }
+    const url = `${window.location.pathname}${window.location.search}#${normalized}`;
+    const nextState = { ...window.history.state, uberRoute: normalized };
+    delete nextState.uiLayer;
+    delete nextState.uberParentRoute;
+    if (tabSlot) nextState.uberTabSlot = true;
+    if (!replace && /^\/earnings\/\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      nextState.uberParentRoute = "/earnings";
+    }
+    window.history[replace ? "replaceState" : "pushState"](nextState, "", url);
+    applyMobileRoute(normalized);
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+
+  function switchMobileTab(tabValue) {
+    const nextRoute = `/${tabValue}`;
+    if (nextRoute === mobileRoute) return;
+    if (window.history.state?.uberParentRoute) {
+      pendingMobileTabRouteRef.current = nextRoute;
+      window.history.back();
+      return;
+    }
+    if (nextRoute === "/today" && window.history.state?.uberTabSlot) {
+      window.history.back();
+      return;
+    }
+    navigateMobile(nextRoute, {
+      replace: mobileRoute !== "/today",
+      tabSlot: nextRoute !== "/today",
+    });
+  }
+
+  useEffect(() => {
+    if (!window.location.hash) {
+      const initialRoute = "/today";
+      window.history.replaceState(
+        { uberRoute: initialRoute },
+        "",
+        `${window.location.pathname}${window.location.search}#${initialRoute}`
+      );
+      applyMobileRoute(initialRoute);
+    } else {
+      applyMobileRoute(window.location.hash.slice(1));
+    }
+
+    const syncRoute = () => {
+      if (pendingMobileTabRouteRef.current) {
+        const pendingRoute = pendingMobileTabRouteRef.current;
+        if (pendingRoute === "/today" && window.history.state?.uberTabSlot) {
+          window.history.back();
+          return;
+        }
+        pendingMobileTabRouteRef.current = null;
+        const pendingState = { ...window.history.state, uberRoute: pendingRoute };
+        delete pendingState.uiLayer;
+        delete pendingState.uberParentRoute;
+        window.history.replaceState(
+          pendingState,
+          "",
+          `${window.location.pathname}${window.location.search}#${pendingRoute}`
+        );
+        applyMobileRoute(pendingRoute);
+        window.scrollTo({ top: 0, behavior: "auto" });
+        return;
+      }
+      applyMobileRoute(window.location.hash.slice(1) || "/today");
+    };
+    window.addEventListener("popstate", syncRoute);
+    window.addEventListener("hashchange", syncRoute);
+    return () => {
+      window.removeEventListener("popstate", syncRoute);
+      window.removeEventListener("hashchange", syncRoute);
+    };
+  }, []);
+  const showExitHint = useRootBackGuard(mobileRoute === "/today", "uber");
   const [isStandaloneApp, setIsStandaloneApp] = useState(() =>
     window.matchMedia?.("(display-mode: standalone)").matches || false
   );
@@ -1575,17 +1699,23 @@ function App() {
   }
 
   function handleWeeklyBarClick(day) {
+    if (!window.matchMedia("(max-width: 820px)").matches) {
+      if (selectedRecordDate === day.date) {
+        setSelectedRecordDate(null);
+      } else {
+        selectRecordAndWeek(day.date);
+      }
+      return;
+    }
+
     if (selectedRecordDate === day.date) {
-      setSelectedRecordDate(null);
+      navigateMobile("/earnings");
       return;
     }
 
     // Blank days are selectable too. That lets the chart become a shortcut
     // into adding a record for the exact missing date.
-    setSelectedRecordDate(day.date);
-
-    const recordWeekStart = getWeekStart(day.date);
-    setSelectedWeekStart(formatDateForInput(recordWeekStart));
+    navigateMobile(`/earnings/${day.date}`);
   }
 
   function changeWeek(offsetInDays) {
@@ -2676,8 +2806,14 @@ function App() {
   // form. If isFormOpen gets added back to this dependency array "for
   // consistency," that regression comes back too.
   useEffect(() => {
-    if (editingDate && formSectionRef.current) {
-      formSectionRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (
+      editingDate &&
+      dailyLogSectionRef.current &&
+      !window.matchMedia("(max-width: 820px)").matches
+    ) {
+      const sectionTop =
+        dailyLogSectionRef.current.getBoundingClientRect().top + window.scrollY - 18;
+      window.scrollTo({ top: Math.max(0, sectionTop), behavior: "smooth" });
     }
   }, [editingDate]);
 
@@ -4337,7 +4473,7 @@ function App() {
             <h1>{mobileTab === "today" ? "Today" : mobileTab === "earnings" ? "Earnings" : "More"}</h1>
           </div>
           {mobileTab === "today" && mobileDayDate !== getTodayInputValue() && (
-            <button type="button" className="mobile-today-reset" onClick={() => selectRecordAndWeek(getTodayInputValue())}>Back to today</button>
+            <button type="button" className="mobile-today-reset" onClick={() => navigateMobile("/today")}>Back to today</button>
           )}
         </header>
 
@@ -4600,7 +4736,7 @@ function App() {
             <div className="mobile-earnings-headline">
               <span>{isSelectedDayMode ? formatMobileDate(selectedRecordDate) : "Week total"}</span>
               <strong><AnimatedNumber value={displayedTotalEarnings} format={(value) => `$${value.toFixed(2)}`} flash={false} /></strong>
-              {isSelectedDayMode && <button type="button" onClick={() => setSelectedRecordDate(null)}>All week</button>}
+              {isSelectedDayMode && <button type="button" onClick={() => window.history.state?.uberParentRoute ? window.history.back() : navigateMobile("/earnings", { replace: true })}>All week</button>}
             </div>
 
             <div className={`mobile-earnings-chart detailed unified ${isSelectedDayMode ? "has-selection" : ""}`}>
@@ -4719,7 +4855,7 @@ function App() {
               <span>Wallet</span>
               <h2>{summary?.current_wallet_balance !== null && summary?.current_wallet_balance !== undefined ? `$${summary.current_wallet_balance.toFixed(2)}` : "Not logged"}</h2>
               <p>{summary?.current_wallet_as_of ? `Last recorded ${formatMobileDate(summary.current_wallet_as_of)}` : "Add a wallet balance to a daily log."}</p>
-              {walletFloor !== null && summary?.current_wallet_balance !== null && <small>${Math.max(summary.current_wallet_balance - walletFloor, 0).toFixed(2)} above wallet floor</small>}
+              {walletFloor !== null && summary?.current_wallet_balance != null && <small>${Math.max(summary.current_wallet_balance - walletFloor, 0).toFixed(2)} above wallet floor</small>}
               {summary?.finance_sync?.status === "failed" && (
                 <button type="button" className="wallet-sync-retry" onClick={retryFinanceWalletSync}>Finance update pending · Retry</button>
               )}
@@ -5584,7 +5720,7 @@ function App() {
       )}
 
 
-      <section className="table-section desktop-primary">
+      <section className="table-section desktop-primary" ref={dailyLogSectionRef}>
         <div className="table-section-header">
           <h2>Daily logs</h2>
 
@@ -6506,14 +6642,7 @@ function App() {
             className={mobileTab === tabValue ? "active" : ""}
             key={tabValue}
             onClick={() => {
-              setMobileTab(tabValue);
-              if (tabValue === "today") {
-                const today = getTodayInputValue();
-                selectRecordAndWeek(today);
-              } else if (tabValue === "earnings") {
-                setSelectedRecordDate(null);
-              }
-              window.scrollTo({ top: 0, behavior: "smooth" });
+              switchMobileTab(tabValue);
             }}
           >
             <span className={`mobile-nav-icon mobile-nav-icon-${tabValue}`} aria-hidden="true"></span>
@@ -7045,6 +7174,7 @@ function App() {
           </div>
         </div>
       )}
+      <div className={`app-exit-hint ${showExitHint ? "is-visible" : ""}`} role="status" aria-hidden={!showExitHint}>Press Back again to exit</div>
     </main>
   );
 }
