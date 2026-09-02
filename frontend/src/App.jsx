@@ -3288,6 +3288,8 @@ function App() {
     const audioContext = prepareMobileAudio();
     if (!audioContext) return;
 
+    const volumeMultiplier = 3.5;
+    const maximumNoteVolume = 0.24;
     const sounds = {
       trip: [[720, 0, 0.085, 0.045]],
       first: [[523, 0, 0.12, 0.05], [659, 0.09, 0.14, 0.055], [784, 0.19, 0.22, 0.06]],
@@ -3305,10 +3307,11 @@ function App() {
       const oscillator = audioContext.createOscillator();
       const gain = audioContext.createGain();
       const noteStart = startAt + delay;
+      const boostedVolume = Math.min(volume * volumeMultiplier, maximumNoteVolume);
       oscillator.type = kind === "trip" ? "sine" : "triangle";
       oscillator.frequency.setValueAtTime(frequency, noteStart);
       gain.gain.setValueAtTime(0.0001, noteStart);
-      gain.gain.exponentialRampToValueAtTime(volume, noteStart + 0.012);
+      gain.gain.exponentialRampToValueAtTime(boostedVolume, noteStart + 0.012);
       gain.gain.exponentialRampToValueAtTime(0.0001, noteStart + duration);
       oscillator.connect(gain);
       gain.connect(audioContext.destination);
